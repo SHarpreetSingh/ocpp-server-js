@@ -1,0 +1,133 @@
+#!/usr/bin/env node
+
+/**
+ * Module dependencies.
+ */
+
+var app = require('../app');
+var debug = require('debug')('ocpp-server-js:server');
+var http = require('http');
+const { WebSocketServer } = require('ws');
+const OcppHandler = require('../ocppHandler');
+
+
+/**
+ * Get port from environment and store in Express.
+ */
+
+var port = normalizePort(process.env.PORT || '3000');
+app.set('port', port);
+
+/**
+ * Create HTTP server.
+ */
+
+var server = http.createServer(app);
+
+// Initialize WebSocket server on the same HTTP server
+const wss = new WebSocketServer({
+  server,
+  // port: 9291,
+  handleProtocols: (protocols, request) => {
+    // Check if the client requested the 'ocpp1.6' protocol
+    if (protocols.has('ocpp1.6')) {
+      return 'ocpp1.6';
+    }
+    // If not, reject the connection by returning false or null
+    return '';
+  }
+});
+
+// Handle WebSocket connections
+wss.on('connection', (ws, req) => {
+
+  // Log the full URL
+  console.log(`New connection from URL: ${req.url},${ws}`);
+
+  // A new Charge Point has connected.
+  const chargePointId = req.url.split('/').pop(); // Extract Charge Point ID from the URL
+  console.log(`Charge Point ${chargePointId} connected.`);
+
+  // Pass the WebSocket and ID to the OCPP handler
+  const ocppHandler = new OcppHandler(ws, chargePointId);
+
+  ws.on('message', ocppHandler.onMessage.bind(ocppHandler));
+
+  ws.on('close', () => {
+    console.log(`Charge Point ${chargePointId} disconnected.`);
+    // Clean up resources if necessary
+  });
+
+  ws.on('error', error => {
+    console.error(`WebSocket error for ${chargePointId}:`, error);
+  });
+});
+
+/**
+ * Listen on provided port, on all network interfaces.
+ */
+
+server.listen(port);
+server.on('error', onError);
+server.on('listening', onListening);
+
+/**
+ * Normalize a port into a number, string, or false.
+ */
+
+function normalizePort(val) {
+  var port = parseInt(val, 10);
+
+  if (isNaN(port)) {
+    // named pipe
+    return val;
+  }
+
+  if (port >= 0) {
+    // port number
+    return port;
+  }
+
+  return false;
+}
+
+/**
+ * Event listener for HTTP server "error" event.
+ */
+
+function onError(error) {
+  if (error.syscall !== 'listen') {
+    throw error;
+  }
+
+  var bind = typeof port === 'string'
+    ? 'Pipe ' + port
+    : 'Port ' + port;
+
+  // handle specific listen errors with friendly messages
+  switch (error.code) {
+    case 'EACCES':
+      console.error(bind + ' requires elevated privileges');
+      process.exit(1);
+      break;
+    case 'EADDRINUSE':
+      console.error(bind + ' is already in use');
+      process.exit(1);
+      break;
+    default:
+      throw error;
+  }
+}
+
+/**
+ * Event listener for HTTP server "listening" event.
+ */
+
+function onListening() {
+  var addr = server.address();
+  var bind = typeof addr === 'string'
+    ? 'pipe ' + addr
+    : 'port ' + addr.port;
+  debug('Listening on ' + bind);
+  debug('websocket listenong on ws://127.0.0.1:3000');
+}
