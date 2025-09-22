@@ -37,7 +37,6 @@ try {
     // Pass the WebSocket and ID to the OCPP handler
     const ocppHandler = new OcppHandler(socket, CpID);
 
-
     socket.on('message', ocppHandler.onMessage.bind(ocppHandler));
 
     socket.on("close", (message) => {
@@ -45,10 +44,10 @@ try {
     });
   });
 
-  const PORT = 3001;
+  const PORT = 3000;
   server.listen(PORT, () => {
     console.log(`🚀 HTTP API:   http://localhost:${PORT}/api/test`);
-    console.log(`🚀 WebSocket: ws://localhost:${PORT}/ws`);
+    console.log(`🚀 WebSocket: ws://localhost:${PORT}`);
   });
 } catch (err) {
   console.log(err);

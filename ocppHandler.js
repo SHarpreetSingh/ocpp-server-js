@@ -14,9 +14,9 @@ export class OcppHandler {
     // Handle incoming WebSocket messages
     onMessage(message) {
         try {
-            console.log("message", message.toString('utf8'))
+            // console.log("message", message.toString('utf8'))
             const parsedMessage = JSON.parse(message);
-            console.log("parsedMessage", parsedMessage)
+            // console.log("parsedMessage", parsedMessage)
             const messageType = parsedMessage[0];
 
             switch (messageType) {
@@ -74,7 +74,7 @@ export class OcppHandler {
 
     // Implement handlers for each OCPP action
     async handleBootNotification(messageId, payload) {
-        console.log(`Received BootNotification from ${this.chargePointId}:`, payload);
+        // console.log(`Received BootNotification from ${this.chargePointId}:`, payload);
         // Logic to validate Charge Point and save to MongoDB
         const bootNotificationSchema = {
             type: "object",
@@ -94,18 +94,26 @@ export class OcppHandler {
             });
         }
 
-        console.log("Bad", payload)
-
-        const cp = new chargePoint({
+        // console.log("Bad", payload)
+        const update = {
             vendor: payload.chargePointVendor,
             model: payload.chargePointModel,
-            serialNumber: payload.chargePointSerialNumber,
+            serialNumber: this.chargePointId,
             firmwareVersion: payload.firmwareVersion,
             lastBoot: new Date(),
             status: "Accepted",
             heartbeatInterval: 300
-        });
-        cp.save();
+        };
+
+        const options = {
+            upsert: true,
+            new: true,
+            setDefaultsOnInsert: true
+        };
+
+        await chargePoint.findOneAndUpdate({
+            serialNumber: this.chargePointId
+        }, update, options);
 
         const responsePayload = {
             status: 'Accepted',
