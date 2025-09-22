@@ -4,6 +4,8 @@ import http from "http";
 import express from "express";
 const app = express();
 const server = http.createServer(app);
+// const OcppHandler = require('./ocppHandler.js');
+import { OcppHandler } from "./ocppHandler.js";
 
 try {
   (async function () {
@@ -23,12 +25,20 @@ try {
 
   wss.on("connection", (socket, req) => {
     const urlParts = req.url.split("/");
+    console.log("first")
+
     const CpID = urlParts[urlParts.length - 1] || "unknown";
     console.log(`CP connected: ${CpID}`);
 
     socket.on("message", (message) => {
       console.log(`Message receviced from ${CpID}: ${message}`);
     });
+
+    // Pass the WebSocket and ID to the OCPP handler
+    const ocppHandler = new OcppHandler(socket, CpID);
+
+
+    socket.on('message', ocppHandler.onMessage.bind(ocppHandler));
 
     socket.on("close", (message) => {
       console.log(`closed connection from ${CpID} `);
