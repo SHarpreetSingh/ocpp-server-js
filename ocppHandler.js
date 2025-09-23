@@ -1,5 +1,4 @@
 // ocppHandler.js
-// const Ajv = require("ajv");
 import Ajv from "ajv";
 const ajv = new Ajv();
 import chargePoint from "./models/chargePoint.js";
@@ -20,13 +19,13 @@ export class OcppHandler {
             const messageType = parsedMessage[0];
 
             switch (messageType) {
-                case "2": // Call
+                case 2: // Call
                     this.handleCall(parsedMessage);
                     break;
-                case "3": // CallResult
+                case 3: // CallResult
                     this.handleCallResult(parsedMessage);
                     break;
-                case "4": // CallError
+                case 4: // CallError
                     this.handleCallError(parsedMessage);
                     break;
                 default:
@@ -108,7 +107,8 @@ export class OcppHandler {
         const options = {
             upsert: true,
             new: true,
-            setDefaultsOnInsert: true
+            setDefaultsOnInsert: true,
+            runValidators: true // 
         };
 
         await chargePoint.findOneAndUpdate({
