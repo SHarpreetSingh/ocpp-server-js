@@ -3,7 +3,8 @@ import Ajv from "ajv";
 const ajv = new Ajv();
 import chargePoint from "./models/chargePoint.js";
 import logs from "./models/logs.js";
-
+import logger from "./logger.js";
+import idTagInfo from "./models/IdTagInfo.js";
 export class OcppHandler {
   constructor(ws, chargePointId) {
     this.ws = ws;
@@ -68,13 +69,14 @@ export class OcppHandler {
         console.warn(`Unsupported action: ${action}`);
         // Send a CallError response for unsupported actions
         this.sendError(messageId, "NotImplemented", "Action not supported");
+        logger.info(`Unsupported action: ${action}`);
         break;
     }
   }
 
   // Implement handlers for each OCPP action
   async handleBootNotification(messageId, payload) {
-    // console.log(`Received BootNotification from ${this.chargePointId}:`, payload);
+    // console.log(`Received BootNotification from ${}:`, payload);
     // Logic to validate Charge Point and save to MongoDB
     const bootNotificationSchema = {
       type: "object",
@@ -137,11 +139,47 @@ export class OcppHandler {
   }
 
   async handleAuthorize(messageId, payload) {
+    // Calculate expiryDate: 30 days from now
+    const expiryDate = new Date();
+    expiryDate.setDate(expiryDate.getDate() + 30); // +30 days
+    const expiryISO = expiryDate.toISOString();
+
     console.log(`Received Authorize from ${this.chargePointId}:`, payload);
+
+    const authorizeSchema = {
+      type: "object",
+      properties: {
+        idTag: { type: "string" },
+      },
+      required: ["idTag"],
+    };
+
+    if (!(await this.validateBootNotification(authorizeSchema, payload))) {
+      return this.sendResult(messageId, {
+        status: "Rejected",
+      });
+    }
+    await idTagInfo.findOneAndUpdate(
+      { idTagInfo: payload.idTag },
+      {
+        $set: {
+          status: "Accepted",
+          expiryDate: expiryISO,
+          parentTag: null,
+        },
+      },
+      {
+        upsert: true,
+        runValidator: true,
+        strict: false,
+      }
+    );
     // Logic to check `idTag` in database
     const responsePayload = {
       idTagInfo: {
         status: "Accepted",
+        expiryDate: expiryISO,
+        parentTag: payload.parentTag,
       },
     };
     this.sendResult(messageId, responsePayload);
@@ -223,6 +261,7 @@ export class OcppHandler {
   sendResult(messageId, payload) {
     const response = [3, messageId, payload];
     console.log("Response", response);
+    logger.info(`-> Response to CP: ${JSON.stringify(response)}`);
     this.ws.send(JSON.stringify(response));
   }
 
