@@ -4,9 +4,13 @@ import http from "http";
 import express from "express";
 const app = express();
 const server = http.createServer(app);
-// const OcppHandler = require('./ocppHandler.js');
 import { OcppHandler } from "./ocppHandler.js";
 import logger from "./logger.js";
+import bodyParser from "body-parser";
+
+app.use(bodyParser.json())
+
+const connectedChargePoints = new Map();
 
 try {
   (async function () {
@@ -26,7 +30,6 @@ try {
 
   wss.on("connection", (socket, req) => {
     const urlParts = req.url.split("/");
-    console.log("first");
 
     const CpID = urlParts[urlParts.length - 1] || "unknown";
     console.log(`CP connected: ${CpID}`);
@@ -38,6 +41,8 @@ try {
 
     // Pass the WebSocket and ID to the OCPP handler
     const ocppHandler = new OcppHandler(socket, CpID);
+    connectedChargePoints.set(CpID, ocppHandler)
+    // console.log("connectedChargePoints", connectedChargePoints)
 
     socket.on("message", ocppHandler.onMessage.bind(ocppHandler));
 
@@ -52,6 +57,36 @@ try {
     console.log(`🚀 HTTP API:   http://localhost:${PORT}/api/test`);
     console.log(`🚀 WebSocket: ws://localhost:${PORT}`);
   });
+
+  app.post('/adminApi/chargers/change-availability/:cpId', async (req, res) => {
+    console.log("hit api ")
+    const serialNumber = req.params.cpId;
+
+    const { type, connectorId } = req.body;
+    console.log("hit api", req.params, req.body);
+
+    const handlerInstance = connectedChargePoints.get(serialNumber);
+    // console.log("handlerInstance", handlerInstance);
+
+    if (!type || !['Operative', 'Inoperative'].includes(type) || connectorId === undefined) {
+      return res.status(400).json
+        ({
+          message: '❌ Invalid request body. "status" must be "Operative" or "Inoperative", and "connectorId" is required.'
+        });
+    }
+
+    if (!handlerInstance) {
+      return res.status(404).json({ message: '❌ Charge point not found or not connected.' });
+    }
+
+    try {
+      const result = await handlerInstance.changeAvailability(serialNumber, type, connectorId);
+      res.status(200).json({ status:"Accepted", connectorId });
+    } catch (error) {
+      res.status(500).json({ status:"Rejected",message: '❌ Failed to send ChangeAvailability command.', error: error.message });
+    }
+  });
+
 } catch (err) {
   console.log(err);
 }

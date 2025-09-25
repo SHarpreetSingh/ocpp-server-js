@@ -1,9 +1,9 @@
 import WebSocket from "ws";
 
 try {
-  const ws = new WebSocket("ws://localhost:3000/cp2");
+  const ws = new WebSocket("ws://localhost:3000/cp02");
   let uniqueId = Date.now().toString();
-const message = Buffer.from('[2,"12345","BootNotification",{"chargePointModel":"modelA","chargePointVendor":"vendorB"}]');
+const message = Buffer.from('[2,"12345","BootNotification",{"chargePointModel":"modelHSI","chargePointVendor":"vendorB"}]');
 
   
   console.log("message cli",message)

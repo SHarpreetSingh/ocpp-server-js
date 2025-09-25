@@ -17,7 +17,7 @@ export class OcppHandler {
     try {
       // console.log("message", message.toString('utf8'))
       const parsedMessage = JSON.parse(message);
-      console.log("parsedMessage", parsedMessage);
+      // console.log("parsedMessage", parsedMessage);
       const messageType = parsedMessage[0];
 
       switch (messageType) {
@@ -41,7 +41,6 @@ export class OcppHandler {
 
   // Handle a "Call" message (Charge Point initiated)
   handleCall(message) {
-    console.log("message", message);
     const [messageType, messageId, action, payload] = message;
 
     switch (action) {
@@ -76,13 +75,13 @@ export class OcppHandler {
 
   // Implement handlers for each OCPP action
   async handleBootNotification(messageId, payload) {
-    // console.log(`Received BootNotification from ${}:`, payload);
+    console.log(`Received BootNotification from ${this.chargePointId}:`);
     // Logic to validate Charge Point and save to MongoDB
     const bootNotificationSchema = {
       type: "object",
       properties: {
-        chargePointVendor: { type: "string" },
-        chargePointModel: { type: "string" },
+        chargePointVendor: { type: "string", minLength: 4, maxLength: 20 },
+        chargePointModel: { type: "string", minLength: 4, maxLength: 20 },
       },
       required: ["chargePointVendor", "chargePointModel"],
     };
@@ -90,9 +89,9 @@ export class OcppHandler {
     if (
       !(await this.validateBootNotification(bootNotificationSchema, payload))
     ) {
-      // console.log("Bad response",)
+      console.warn("*** ❌ Bad request****",)
 
-      return this.sendResult(messageId, {
+      return this.sendError(messageId, {
         status: "Rejected",
         currentTime: new Date().toISOString(),
         interval: 0,
@@ -236,6 +235,20 @@ export class OcppHandler {
     this.sendResult(messageId, {});
   }
 
+  changeAvailability(serialNumber, type, connectorId) {
+    const messageId = "change-availability-" + Date.now();
+    const responsePayload = {
+      status: "Accepted",
+      connectorId
+    };
+
+    return new Promise((resolve, reject) => {
+      this.callPromises.set(messageId, resolve(true));
+      this.sendResult(messageId, responsePayload);
+      this.updateConnectorStatus(serialNumber, type, connectorId)
+    });
+  }
+
   // Handle a "CallResult" message (Response from a Central System initiated call)
   handleCallResult(message) {
     const [messageType, messageId, payload] = message;
@@ -262,6 +275,7 @@ export class OcppHandler {
     const response = [3, messageId, payload];
     console.log("Response", response);
     logger.info(`-> Response to CP: ${JSON.stringify(response)}`);
+    console.info("sendResult", response);
     this.ws.send(JSON.stringify(response));
   }
 
@@ -270,6 +284,34 @@ export class OcppHandler {
     const response = [4, messageId, errorCode, errorDescription, {}];
     this.ws.send(JSON.stringify(response));
   }
-}
 
-// module.exports = OcppHandler;
+  async updateConnectorStatus(serialNumber, type, connectorId) {
+    try {
+      console.log(serialNumber, type, connectorId)
+      const updatedCP = await chargePoint.findOneAndUpdate(
+        {
+          serialNumber,
+          'connectors.connectorId': connectorId
+        },
+        {
+          $set: {
+            'connectors.$.type': type,
+          }
+        },
+        {
+          new: true,
+        }
+      );
+      console.log("updatedCP", updatedCP)
+
+      if (!updatedCP) {
+        console.log(`Charge Point ${serialNumber} or Connector ${connectorId} not found.`);
+      } else {
+        console.log(`Status updated for Connector ${connectorId} on ${serialNumber} to ${type}.`);
+      }
+
+    } catch (error) {
+      console.error("Error updating connector status:", error);
+    }
+  }
+}
