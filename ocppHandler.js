@@ -120,11 +120,6 @@ export class OcppHandler {
   }
 
   async handleAuthorize(messageId, payload) {
-    // Calculate expiryDate: 30 days from now
-    const expiryDate = new Date();
-    expiryDate.setDate(expiryDate.getDate() + 30); // +30 days
-    const expiryISO = expiryDate.toISOString();
-
     console.log(`Received Authorize from ${this.chargePointId}:`, payload);
 
     const authorizeSchema = {
@@ -140,30 +135,20 @@ export class OcppHandler {
         status: "Rejected",
       });
     }
-    await idTagInfo.findOneAndUpdate(
-      { idTagInfo: payload.idTag },
-      {
-        $set: {
-          status: "Accepted",
-          expiryDate: expiryISO,
-          parentTag: null,
-        },
-      },
-      {
-        upsert: true,
-        runValidator: true,
-        strict: false,
-      }
-    );
-    // Logic to check `idTag` in database
-    const responsePayload = {
-      idTagInfo: {
+    const IDTAG = await idTagInfo.findOne({ idTagInfo: payload.idTag });
+    let idtaginfo;
+    if (!IDTAG) {
+      idtaginfo = { status: "Invalid" };
+    } else if (IDTAG.expiryDate && IDTAG.expiryDate < new Date()) {
+      idtaginfo = { status: "Expired", expiryDate: IDTAG.expiryDate };
+    } else {
+      idtaginfo = {
         status: "Accepted",
-        expiryDate: expiryISO,
-        parentTag: payload.parentTag,
-      },
-    };
-    this.sendResult(messageId, responsePayload);
+        expiryDate: IDTAG.expiryDate,
+        parentTag: IDTAG.parentTag,
+      };
+    }
+    this.sendResult(messageId, { idtaginfo });
   }
 
   async handleStartTransaction(messageId, payload) {
