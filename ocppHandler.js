@@ -2,9 +2,15 @@
 import Ajv from "ajv";
 const ajv = new Ajv();
 import chargePoint from "./models/chargePoint.js";
-import logs from "./models/logs.js";
+
 import logger from "./logger.js";
 import idTagInfo from "./models/IdTagInfo.js";
+import {
+  createAndUpdateBootnotification,
+  updateConnectorStatus
+} from "./services/queries.js";
+
+
 export class OcppHandler {
   constructor(ws, chargePointId) {
     this.ws = ws;
@@ -76,7 +82,7 @@ export class OcppHandler {
   // Implement handlers for each OCPP action
   async handleBootNotification(messageId, payload) {
     console.log(`Received BootNotification from ${this.chargePointId}:`);
-    // Logic to validate Charge Point and save to MongoDB
+
     const bootNotificationSchema = {
       type: "object",
       properties: {
@@ -90,7 +96,6 @@ export class OcppHandler {
       !(await this.validateBootNotification(bootNotificationSchema, payload))
     ) {
       console.warn("*** ❌ Bad request****",)
-
       return this.sendError(messageId, {
         status: "Rejected",
         currentTime: new Date().toISOString(),
@@ -98,39 +103,16 @@ export class OcppHandler {
       });
     }
 
-    // console.log("Bad", payload)
-    const update = {
-      vendor: payload.chargePointVendor,
-      model: payload.chargePointModel,
-      serialNumber: this.chargePointId,
-      firmwareVersion: payload.firmwareVersion,
-      lastBoot: new Date(),
-      status: "Accepted",
-      heartbeatInterval: 300,
-    };
-
-    const options = {
-      upsert: true,
-      new: true,
-      setDefaultsOnInsert: true,
-      runValidators: true, //
-    };
-
-    await chargePoint.findOneAndUpdate(
-      {
-        serialNumber: this.chargePointId,
-      },
-      update,
-      options
-    );
+    await createAndUpdateBootnotification(payload, this)
 
     const responsePayload = {
       status: "Accepted",
       currentTime: new Date().toISOString(),
       heartbeatInterval: 300, // seconds
     };
-    this.sendResult(messageId, responsePayload);
+    return this.sendResult(messageId, responsePayload);
   }
+
 
   async validateBootNotification(bootNotificationSchema, payload) {
     const validate = ajv.compile(bootNotificationSchema);
@@ -242,10 +224,16 @@ export class OcppHandler {
       connectorId
     };
 
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
       this.callPromises.set(messageId, resolve(true));
+      const query = await updateConnectorStatus(serialNumber, type, connectorId)
+      console.log("query",query)
+      if (!query) {
+        return this.sendError(messageId, {
+          status: "Rejected",
+        });
+      }
       this.sendResult(messageId, responsePayload);
-      this.updateConnectorStatus(serialNumber, type, connectorId)
     });
   }
 
@@ -285,33 +273,4 @@ export class OcppHandler {
     this.ws.send(JSON.stringify(response));
   }
 
-  async updateConnectorStatus(serialNumber, type, connectorId) {
-    try {
-      console.log(serialNumber, type, connectorId)
-      const updatedCP = await chargePoint.findOneAndUpdate(
-        {
-          serialNumber,
-          'connectors.connectorId': connectorId
-        },
-        {
-          $set: {
-            'connectors.$.type': type,
-          }
-        },
-        {
-          new: true,
-        }
-      );
-      console.log("updatedCP", updatedCP)
-
-      if (!updatedCP) {
-        console.log(`Charge Point ${serialNumber} or Connector ${connectorId} not found.`);
-      } else {
-        console.log(`Status updated for Connector ${connectorId} on ${serialNumber} to ${type}.`);
-      }
-
-    } catch (error) {
-      console.error("Error updating connector status:", error);
-    }
-  }
 }
