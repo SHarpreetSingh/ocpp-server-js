@@ -135,7 +135,9 @@ export class OcppHandler {
         status: "Rejected",
       });
     }
+
     const IDTAG = await idTagInfo.findOne({ idTagInfo: payload.idTag });
+    
     let idtaginfo;
     if (!IDTAG) {
       idtaginfo = { status: "Invalid" };
