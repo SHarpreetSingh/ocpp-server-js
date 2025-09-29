@@ -4,7 +4,7 @@ import addFormats from "ajv-formats"
 import chargePoint from "./models/chargePoint.js";
 
 import logger from "./logger.js";
-import idTagInfo from "./models/IdTagInfo.js";
+import idTag from "./models/IdTag.js";
 import {
   createAndUpdateBootnotification,
   updateConnectorStatus
@@ -68,7 +68,7 @@ export class OcppHandler {
         this.handleStopTransaction(messageId, payload);
         break;
       case "Heartbeat":
-        this.handleHeartbeat(messageId, payload);
+        this.handleHeartbeat(messageId);
         break;
       case "MeterValues":
         this.handleMeterValues(messageId, payload);
@@ -101,7 +101,7 @@ export class OcppHandler {
     };
 
     if (
-      !(await this.validateBootNotification(bootNotificationSchema, payload))
+      !(await this.validatePayload(bootNotificationSchema, payload))
     ) {
       console.warn("*** ❌ Bad request****",)
       return this.sendError(messageId, {
@@ -121,61 +121,60 @@ export class OcppHandler {
     return this.sendResult(messageId, responsePayload);
   }
 
-  async validateBootNotification(bootNotificationSchema, payload) {
-    const validate = ajv.compile(bootNotificationSchema);
+  // async validateBootNotification(bootNotificationSchema, payload) {
+  //   const validate = ajv.compile(bootNotificationSchema);
+  // }
+
+  async validatePayload(ActionSchema, payload) {
+    const validate = ajv.compile(ActionSchema);
     return validate(payload);
   }
 
-  async validateJsonSchema(jsonSchema, payload) {
-    const validate = ajv.compile(jsonSchema);
-    return validate(payload);
-  }
+  // async validateJsonSchema(jsonSchema, payload) {
+  //   const validate = ajv.compile(jsonSchema);
+  //   return validate(payload);
+  // }
 
   async handleAuthorize(messageId, payload) {
-    // Calculate expiryDate: 30 days from now
-    const expiryDate = new Date();
-    expiryDate.setDate(expiryDate.getDate() + 30); // +30 days
-    const expiryISO = expiryDate.toISOString();
-
     console.log(`Received Authorize from ${this.chargePointId}:`, payload);
 
     const authorizeSchema = {
       type: "object",
       properties: {
-        idTag: { type: "string" },
+        idTag: { type: "string", minLength: 4, maxLength: 20 },
       },
       required: ["idTag"],
     };
 
-    if (!(await this.validateBootNotification(authorizeSchema, payload))) {
+    if (!(await this.validatePayload(authorizeSchema, payload))) {
+      console.warn("*** ❌ Bad request****",)
       return this.sendResult(messageId, {
         status: "Rejected",
       });
     }
-    await idTagInfo.findOneAndUpdate(
-      { idTagInfo: payload.idTag },
-      {
-        $set: {
-          status: "Accepted",
-          expiryDate: expiryISO,
-          parentTag: null,
-        },
-      },
-      {
-        upsert: true,
-        runValidator: true,
-        strict: false,
-      }
-    );
-    // Logic to check `idTag` in database
-    const responsePayload = {
-      idTagInfo: {
+    try {
+       const IDTAG = await idTag.findOne({ idTagInfo: payload.idTag });
+    
+    let idtaginfo;
+    const now = new Date();
+    if (!IDTAG) {
+      idtaginfo = { status: "Invalid" };
+    } else if (IDTAG.expiryDate && IDTAG.expiryDate < now) {
+      idtaginfo = { status: "Expired", expiryDate: IDTAG.expiryDate,parentTag: IDTAG.parentTag, };
+    } else {
+      idtaginfo = {
         status: "Accepted",
-        expiryDate: expiryISO,
-        parentTag: payload.parentTag,
-      },
-    };
-    this.sendResult(messageId, responsePayload);
+        expiryDate: IDTAG.expiryDate,
+        parentTag: IDTAG.parentTag,
+      };
+    }
+     console.log(`Authorize result for ${payload.idTag}: ${idTagInfo.status}`);
+    this.sendResult(messageId, { idtaginfo:idtaginfo });
+    } catch (err) {
+      console.error(`Error validating authorize request for idTag=${payload.idTag}`, err);
+      this.sendResult(messageId, { idTagInfo: { status: "Error" } });
+    }
+   
   }
 
   async handleStartTransaction(messageId, payload) {
@@ -207,20 +206,24 @@ export class OcppHandler {
     this.sendResult(messageId, responsePayload);
   }
 
-  async handleHeartbeat(messageId, payload) {
-    console.log(`Received Heartbeat from ${this.chargePointId}`);
-    const responsePayload = {
-      currentTime: new Date().toISOString(),
-    };
-    this.sendResult(messageId, responsePayload);
-    await chargePoint.findOneAndUpdate(
+  async handleHeartbeat(messageId) {
+    const now = new Date();
+    console.log(`[${new Date().toISOString()}] Heartbeat received from ${this.chargePointId}`);
+
+    this.sendResult(messageId, {currentTime: now.toISOString()});
+
+    try{
+      await chargePoint.findOneAndUpdate(
       { serialNumber: this.chargePointId },
       {
-        $set: { lastboot: new Date() },
+        $set: { lastboot: now},
         $setOnInsert: { serialNumber: this.chargePointId },
       },
       { upsert: true, runValidators: true }
     );
+    }catch(err){
+        console.error(`Error updating heartbeat for ${this.chargePointId}`, err);
+    }
   }
 
   async handleMeterValues(messageId, payload) {
@@ -275,7 +278,7 @@ export class OcppHandler {
       additionalProperties: false
     };
 
-    const result = await this.validateJsonSchema(StatusNotificationSchema, payload)
+    const result = await this.validatePayload(StatusNotificationSchema, payload)
     console.log("result", result)
 
     if (!result) {
@@ -365,7 +368,6 @@ export class OcppHandler {
   // Send a "CallResult" response back to the Charge Point
   sendResult(messageId, payload) {
     const response = [3, messageId, payload];
-    console.log("Response", response);
     logger.info(`-> Response to CP: ${JSON.stringify(response)}`);
     console.info("sendResult", response);
     this.ws.send(JSON.stringify(response));
