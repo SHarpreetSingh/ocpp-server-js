@@ -1,6 +1,6 @@
 // ocppHandler.js
 import Ajv from "ajv";
-const ajv = new Ajv();
+import addFormats from "ajv-formats"
 import chargePoint from "./models/chargePoint.js";
 
 import logger from "./logger.js";
@@ -9,6 +9,9 @@ import {
   createAndUpdateBootnotification,
   updateConnectorStatus
 } from "./services/queries.js";
+
+const ajv = new Ajv();
+addFormats(ajv)
 
 
 export class OcppHandler {
@@ -70,6 +73,11 @@ export class OcppHandler {
       case "MeterValues":
         this.handleMeterValues(messageId, payload);
         break;
+      case 'StatusNotification':
+        // 3. If valid, process the message
+        this.handleStatusNotification(messageId, payload);
+        break;
+
       default:
         console.warn(`Unsupported action: ${action}`);
         // Send a CallError response for unsupported actions
@@ -113,9 +121,13 @@ export class OcppHandler {
     return this.sendResult(messageId, responsePayload);
   }
 
-
   async validateBootNotification(bootNotificationSchema, payload) {
     const validate = ajv.compile(bootNotificationSchema);
+    return validate(payload);
+  }
+
+  async validateJsonSchema(jsonSchema, payload) {
+    const validate = ajv.compile(jsonSchema);
     return validate(payload);
   }
 
@@ -217,23 +229,115 @@ export class OcppHandler {
     this.sendResult(messageId, {});
   }
 
+
+  async handleStatusNotification(messageId, payload) {
+    const StatusNotificationSchema = {
+      type: "object",
+      properties: {
+        // connectorId: REQUIRED, must be an integer >= 1
+        connectorId: {
+          type: "integer",
+          minimum: 1
+        },
+
+        // status: REQUIRED, must be one of the specified strings
+        status: {
+          type: "string",
+          enum: [
+            "Available", "Preparing", "Charging", "SuspendedEVSE",
+            "SuspendedEV", "Finishing", "Reserved", "Unavailable",
+            "Faulted"
+          ]
+        },
+
+        // errorCode: REQUIRED, must be a string (usually "NoError")
+        errorCode: {
+          type: "string",
+          maxLength: 50
+        },
+
+        // timestamp: REQUIRED if status is not Available or Preparing
+        timestamp: {
+          type: "string",
+          format: "date-time" // Ensures ISO 8601 format
+        },
+
+        // Optional Fields
+        info: { type: "string", maxLength: 50 },
+        vendorId: { type: "string", maxLength: 255 },
+        vendorErrorCode: { type: "string", maxLength: 50 }
+      },
+
+      // Define the mandatory fields for the payload
+      required: ["connectorId", "status", "errorCode"],
+
+      // Disallow extra fields that are not part of the OCPP spec
+      additionalProperties: false
+    };
+
+    const result = await this.validateJsonSchema(StatusNotificationSchema, payload)
+    console.log("result", result)
+
+    if (!result) {
+      console.error('Validation Error for StatusNotification:', result);
+      // 2. Reject the non-compliant message
+      // Send a CALLERROR back to the CP instead of processing.
+      this.sendError(
+        messageId,
+        "TypeConstraintViolation",
+        "Payload fields did not meet OCPP specification."
+      );
+      return; // Stop processing
+    }
+
+
+    const { connectorId, status, errorCode } = payload;
+
+    // Log the event for debugging
+    console.log(
+      `Received StatusNotification from ${this.chargePointId} ` +
+      `for Connector ${connectorId}: ${status} (Error: ${errorCode || 'None'})`
+    );
+
+    try {
+      //  Update the database record
+      await updateConnectorStatus(
+        this.chargePointId, // serialNumber
+        status,
+        connectorId,
+        // We can also pass errorCode if we want to save it
+      );
+
+      // send the confirmation back to the Charge Point
+      // The StatusNotification.conf payload is empty {}
+      this.sendResult(messageId, {});
+
+    } catch (error) {
+      console.error(`❌ DB update failed for StatusNotification from ${this.chargePointId}:`, error);
+      // Even if the DB update fails, we typically send the confirmation 
+      // to prevent the CP from retrying, but log the error prominently.
+      this.sendError(messageId, {});
+    }
+  }
+
+
   changeAvailability(serialNumber, type, connectorId) {
     const messageId = "change-availability-" + Date.now();
-    const responsePayload = {
-      status: "Accepted",
-      connectorId
+    const requestPayload = {
+        connectorId: parseInt(connectorId), // Ensure it's an integer
+        type: type // The command type: "Operative" or "Inoperative"
     };
 
     return new Promise(async (resolve, reject) => {
       this.callPromises.set(messageId, resolve(true));
-      const query = await updateConnectorStatus(serialNumber, type, connectorId)
-      console.log("query",query)
-      if (!query) {
-        return this.sendError(messageId, {
-          status: "Rejected",
-        });
-      }
-      this.sendResult(messageId, responsePayload);
+      const message = [
+        2,                     // Message Type ID: 2 (CALL for request)
+        messageId,             
+        "ChangeAvailability",  
+        requestPayload         // The payload object
+      ]
+
+      this.ws.send(JSON.stringify(message));
     });
   }
 

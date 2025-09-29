@@ -59,11 +59,10 @@ try {
   });
 
   app.post('/adminApi/chargers/change-availability/:cpId', async (req, res) => {
-    console.log("hit api ")
     const serialNumber = req.params.cpId;
 
     const { type, connectorId } = req.body;
-    console.log("hit api", req.params, req.body);
+    console.log("hit api", req.params, "req.body",req.body);
 
     const handlerInstance = connectedChargePoints.get(serialNumber);
     // console.log("handlerInstance", handlerInstance);
