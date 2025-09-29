@@ -51,9 +51,9 @@ export async function createAndUpdateBootnotification(payload, ocppHandler) {
     }
 }
 
-export async function updateConnectorStatus(serialNumber, type, connectorId) {
+export async function updateConnectorStatus(serialNumber, status, connectorId) {
     try {
-        console.log(serialNumber, type, connectorId)
+        console.log(serialNumber, status, connectorId)
         const updatedCP = await chargePoint.findOneAndUpdate(
             {
                 serialNumber,
@@ -61,7 +61,7 @@ export async function updateConnectorStatus(serialNumber, type, connectorId) {
             },
             {
                 $set: {
-                    'connectors.$.type': type,
+                    'connectors.$.status': status,
                 }
             },
             {
@@ -74,7 +74,7 @@ export async function updateConnectorStatus(serialNumber, type, connectorId) {
             console.log(`Charge Point ${serialNumber} or Connector ${connectorId} not found.`);
             return false
         }
-        console.log(`Status updated for Connector ${connectorId} on ${serialNumber} to ${type}.`);
+        console.log(`Status updated for Connector ${connectorId} on ${serialNumber} to status: ${status}.`);
         return true
     } catch (error) {
         console.error("Error updating connector status:", error);

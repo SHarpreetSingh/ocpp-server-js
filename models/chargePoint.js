@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 
 const connectorSchema = new mongoose.Schema({
   connectorId: { type: Number, required: true },
-  type: { type: String, default: "Available" },
+  status: { type: String, default: "Available" },
   currentTransactionId: { type: Number, default: 0 }, // To track active sessions
   connectorType: String, // e.g., "Type 2", "CHAdeMO"
 });
