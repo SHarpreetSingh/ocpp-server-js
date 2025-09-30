@@ -121,19 +121,10 @@ export class OcppHandler {
     return this.sendResult(messageId, responsePayload);
   }
 
-  // async validateBootNotification(bootNotificationSchema, payload) {
-  //   const validate = ajv.compile(bootNotificationSchema);
-  // }
-
   async validatePayload(ActionSchema, payload) {
     const validate = ajv.compile(ActionSchema);
     return validate(payload);
   }
-
-  // async validateJsonSchema(jsonSchema, payload) {
-  //   const validate = ajv.compile(jsonSchema);
-  //   return validate(payload);
-  // }
 
   async handleAuthorize(messageId, payload) {
     console.log(`Received Authorize from ${this.chargePointId}:`, payload);
@@ -153,28 +144,28 @@ export class OcppHandler {
       });
     }
     try {
-       const IDTAG = await idTag.findOne({ idTagInfo: payload.idTag });
-    
-    let idtaginfo;
-    const now = new Date();
-    if (!IDTAG) {
-      idtaginfo = { status: "Invalid" };
-    } else if (IDTAG.expiryDate && IDTAG.expiryDate < now) {
-      idtaginfo = { status: "Expired", expiryDate: IDTAG.expiryDate,parentTag: IDTAG.parentTag, };
-    } else {
-      idtaginfo = {
-        status: "Accepted",
-        expiryDate: IDTAG.expiryDate,
-        parentTag: IDTAG.parentTag,
-      };
-    }
-     console.log(`Authorize result for ${payload.idTag}: ${idTagInfo.status}`);
-    this.sendResult(messageId, { idtaginfo:idtaginfo });
+      const IDTAG = await idTag.findOne({ idTagInfo: payload.idTag });
+
+      let idtaginfo;
+      const now = new Date();
+      if (!IDTAG) {
+        idtaginfo = { status: "Invalid" };
+      } else if (IDTAG.expiryDate && IDTAG.expiryDate < now) {
+        idtaginfo = { status: "Expired", expiryDate: IDTAG.expiryDate, parentTag: IDTAG.parentTag, };
+      } else {
+        idtaginfo = {
+          status: "Accepted",
+          expiryDate: IDTAG.expiryDate,
+          parentTag: IDTAG.parentTag,
+        };
+      }
+      console.log(`Authorize result for ${payload.idTag}: ${idTagInfo.status}`);
+      this.sendResult(messageId, { idtaginfo: idtaginfo });
     } catch (err) {
       console.error(`Error validating authorize request for idTag=${payload.idTag}`, err);
       this.sendResult(messageId, { idTagInfo: { status: "Error" } });
     }
-   
+
   }
 
   async handleStartTransaction(messageId, payload) {
@@ -210,19 +201,19 @@ export class OcppHandler {
     const now = new Date();
     console.log(`[${new Date().toISOString()}] Heartbeat received from ${this.chargePointId}`);
 
-    this.sendResult(messageId, {currentTime: now.toISOString()});
+    this.sendResult(messageId, { currentTime: now.toISOString() });
 
-    try{
+    try {
       await chargePoint.findOneAndUpdate(
-      { serialNumber: this.chargePointId },
-      {
-        $set: { lastboot: now},
-        $setOnInsert: { serialNumber: this.chargePointId },
-      },
-      { upsert: true, runValidators: true }
-    );
-    }catch(err){
-        console.error(`Error updating heartbeat for ${this.chargePointId}`, err);
+        { serialNumber: this.chargePointId },
+        {
+          $set: { lastboot: now },
+          $setOnInsert: { serialNumber: this.chargePointId },
+        },
+        { upsert: true, runValidators: true }
+      );
+    } catch (err) {
+      console.error(`Error updating heartbeat for ${this.chargePointId}`, err);
     }
   }
 
@@ -304,12 +295,21 @@ export class OcppHandler {
 
     try {
       //  Update the database record
-      await updateConnectorStatus(
+      const result = await updateConnectorStatus(
         this.chargePointId, // serialNumber
         status,
         connectorId,
         // We can also pass errorCode if we want to save it
       );
+
+      // check if errr in db
+      if (!result) {
+        return this.sendError(
+          messageId,
+          "InternalError",
+          "Central System database update failed."
+        );
+      }
 
       // send the confirmation back to the Charge Point
       // The StatusNotification.conf payload is empty {}
@@ -327,20 +327,27 @@ export class OcppHandler {
   changeAvailability(serialNumber, type, connectorId) {
     const messageId = "change-availability-" + Date.now();
     const requestPayload = {
-        connectorId: parseInt(connectorId), // Ensure it's an integer
-        type: type // The command type: "Operative" or "Inoperative"
+      connectorId: parseInt(connectorId), // Ensure it's an integer
+      type: type // The command type: "Operative" or "Inoperative"
     };
 
     return new Promise(async (resolve, reject) => {
       this.callPromises.set(messageId, resolve(true));
       const message = [
         2,                     // Message Type ID: 2 (CALL for request)
-        messageId,             
-        "ChangeAvailability",  
+        messageId,
+        "ChangeAvailability",
         requestPayload         // The payload object
       ]
 
-      this.ws.send(JSON.stringify(message));
+      try {
+        // 2. Send the message
+        this.ws.send(JSON.stringify(message));
+      } catch (error) {
+        // 3. Reject if WebSocket send fails immediately (e.g., connection lost)
+        this.callPromises.delete(messageId);
+        reject(new Error(`WebSocket send failed: ${error.message}`));
+      }
     });
   }
 
