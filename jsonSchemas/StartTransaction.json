@@ -1,0 +1,33 @@
+{
+  "type": "object",
+  "properties": {
+    "connectorId": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Must be greater than 0, as 0 is for the CP itself."
+    },
+    "idTag": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20,
+      "description": "The identifier used by the local user. Max length 20."
+    },
+    "meterStart": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "The meter value (in Wh) at the start of the transaction."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "The time the transaction started, MUST be valid ISO 8601."
+    },
+    "reservationId": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Optional: The ID of the reservation that this transaction fulfills."
+    }
+  },
+  "required": ["connectorId", "idTag", "meterStart", "timestamp"],
+  "additionalProperties": false
+}
