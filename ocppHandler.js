@@ -127,7 +127,7 @@ export class OcppHandler {
 
   async validatePayload(ActionSchema, payload) {
     const validate = ajv.compile(ActionSchema);
-    console.log("validate",validate)
+    // console.log("validate",validate)
     return validate(payload);
   }
 
@@ -149,8 +149,8 @@ export class OcppHandler {
       });
     }
     try {
-      const IDTAG = await idTag.findOne({ idTagInfo: payload.idTag });
-
+      const IDTAG = await idTag.findOne({ idTag: payload.idTag });
+      console.log("IDTAG",IDTAG);
       let idtaginfo;
       const now = new Date();
       if (!IDTAG) {
@@ -164,7 +164,7 @@ export class OcppHandler {
           parentTag: IDTAG.parentTag,
         };
       }
-      console.log(`Authorize result for ${payload.idTag}: ${idTagInfo.status}`);
+      console.log(`Authorize result for ${payload.idTag}: ${idTag.status}`);
       this.sendResult(messageId, { idtaginfo: idtaginfo });
     } catch (err) {
       console.error(`Error validating authorize request for idTag=${payload.idTag}`, err);
