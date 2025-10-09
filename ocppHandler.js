@@ -9,6 +9,9 @@ import {
   createAndUpdateBootnotification,
   updateConnectorStatus
 } from "./services/queries.js";
+import TransactionModel from "./models/transaction.js";
+import StartTransactionSchema from "./jsonSchemas/StartTransaction.json" with { type: "json" };
+import MeterValuesSchema from "./jsonSchemas/MeterValuesSchema.json" with { type: "json" };
 
 const ajv = new Ajv();
 addFormats(ajv)
@@ -123,6 +126,7 @@ export class OcppHandler {
 
   async validatePayload(ActionSchema, payload) {
     const validate = ajv.compile(ActionSchema);
+    console.log("validate",validate)
     return validate(payload);
   }
 
@@ -168,35 +172,6 @@ export class OcppHandler {
 
   }
 
-  async handleStartTransaction(messageId, payload) {
-    console.log(
-      `Received StartTransaction from ${this.chargePointId}:`,
-      payload
-    );
-    // Logic to create a new transaction record in MongoDB
-    const responsePayload = {
-      idTagInfo: {
-        status: "Accepted",
-      },
-      transactionId: 1001, // Example transaction ID
-    };
-    this.sendResult(messageId, responsePayload);
-  }
-
-  async handleStopTransaction(messageId, payload) {
-    console.log(
-      `Received StopTransaction from ${this.chargePointId}:`,
-      payload
-    );
-    // Logic to update the transaction record in MongoDB
-    const responsePayload = {
-      idTagInfo: {
-        status: "Accepted",
-      },
-    };
-    this.sendResult(messageId, responsePayload);
-  }
-
   async handleHeartbeat(messageId) {
     const now = new Date();
     console.log(`[${new Date().toISOString()}] Heartbeat received from ${this.chargePointId}`);
@@ -217,10 +192,165 @@ export class OcppHandler {
     }
   }
 
+  async handleStartTransaction(messageId, payload) {
+    console.log(
+      `Received StartTransaction from ${this.chargePointId}:`,
+      payload
+    );
+
+    if (
+      !(await this.validatePayload(StartTransactionSchema, payload))
+    ) {
+      console.warn(`Validation failed for CP ${this.chargePointId}:`);
+      return this.sendError(messageId, 'ProtocolError',
+        `Invalid payload`);
+    }
+
+    //***** */ Connector Availability Check
+    //*****  2. ID Tag Status Check */
+
+    // --- 2. Extract Data from Payload ---
+    const {
+      connectorId,
+      idTag,
+      meterStart,
+      timestamp,
+    } = payload;
+
+    // --- 3. Validate Transaction Prerequisites (Optional but recommended) ---
+    // (e.g., check if the CP's connector is actually in 'Preparing' status)
+    const txnId = Math.floor(Math.random() * 1000)
+    try {
+      // --- 4. Database Operation: CREATE Transaction ---
+      const newTransaction = await TransactionModel.create({
+        chargePoint: this.chargePointId, // Reference to the CP document's ObjectId
+        connectorId: connectorId,
+        csTransactionId: txnId, // mock for now
+        idTag,
+        start_timestamp: new Date(timestamp),
+        meterStart: meterStart,
+        isFinished: false, // Mark as active
+      });
+
+      console.debug("newTransaction", newTransaction)
+
+      // --- 5. Database Operation: UPDATE Charge Point Connector Status ---
+      // We update your existing CP schema to reflect the active session
+      await chargePoint.updateOne(
+        {
+          serialNumber: this.chargePointId,
+          'connectors.connectorId': connectorId
+        },
+        {
+          $set: {
+            'connectors.$.status': 'Charging', // Status changes from 'Preparing' to 'Charging'
+            'connectors.$.currentTransactionId': txnId
+          }
+        }
+      );
+
+      // --- 6. Send CONFIRMATION to the Charge Point ---
+      const confPayload = {
+        // The IdTagInfo should reflect the current authorization status.
+        idTagInfo: {
+          status: 'Accepted'
+          // Optionally add parentIdTag, expiryDate
+        },
+        transactionId: txnId // KEY: The CP must use this ID for all subsequent MeterValues and StopTransaction requests
+      };
+
+      // This utility function packages the response and sends it over the WebSocket.
+      this.sendResult(messageId, confPayload);
+
+    } catch (error) {
+      console.error('Error handling StartTransaction:', error);
+
+      // --- 7. Handle Error & Send SOAP/JSON Fault (or a non-Accepted CONF) ---
+      // In a real system, you would log the error and send a specific OCPP fault response 
+      // if the database failed or validation failed.
+
+      this.sendError(messageId, "GenericError",
+        "Rejected by Central System: Policy or authorization failed.",
+        {});
+    }
+  }
+
   async handleMeterValues(messageId, payload) {
     console.log(`Received MeterValues from ${this.chargePointId}:`, payload);
-    // Logic to save meter values to MongoDB
-    this.sendResult(messageId, {});
+
+    if (
+      !(await this.validatePayload(MeterValuesSchema, payload))
+    ) {
+      console.warn(`Validation failed for CP ${this.chargePointId}:`);
+      return this.sendError(messageId, 'ProtocolError',
+        `Invalid payload`);
+    }
+
+    // --- 2. Extract Data from Payload ---
+    const {
+      connectorId,
+      meterValue, // This is an array of MeterValue objects 
+      transactionId // Optional field 
+    } = payload;
+
+    try {
+
+      // a. Lookup the Transaction (If applicable)
+      // Find the active transaction in the database using the CS transaction ID
+      const targetTransaction = await TransactionModel.findOne({
+        csTransactionId: transactionId,
+        isFinished: false // Ensure the transaction is still active
+      });
+
+      if (!targetTransaction) {
+        console.warn(`Received MeterValues for unknown or stale transaction ID: ${transactionId}. Proceeding to log data without internal transaction link.`);
+        return this.sendResult(messageId, {});
+      }
+
+      console.debug(`Stored ${meterValue.length} meter value reading(s) for Connector ${connectorId}.`);
+
+      // 3. Database Operation: Push the new readings into the 'readings' array
+      const updateResult = await TransactionModel.updateOne(
+        { _id: targetTransaction._id }, // Filter by internal document ID
+        {
+          // The $push operator appends the reading to the array
+          // $each allows you to push multiple elements in a single operation
+          $push: {
+            readings: { $each: meterValue }
+          }
+        }
+      );
+
+      // --- 4. Send CONFIRMATION to the Charge Point ---
+      // MeterValues.conf has an empty payload 
+      const confPayload = {};
+      this.sendResult(messageId, confPayload);
+
+    } catch (error) {
+      console.error(`Internal Error storing MeterValues for CP ${this.chargePointId}:`, error);
+
+      // IMPORTANT: The Central System MUST still respond with MeterValues.conf 
+      // even if its internal database operation fails, provided the message 
+      // format was valid (as per step 1).
+      this.sendResult(messageId, {});
+    }
+
+    // // Logic to save meter values to MongoDB
+    // this.sendResult(messageId, {});
+  }
+
+  async handleStopTransaction(messageId, payload) {
+    console.log(
+      `Received StopTransaction from ${this.chargePointId}:`,
+      payload
+    );
+    // Logic to update the transaction record in MongoDB
+    const responsePayload = {
+      idTagInfo: {
+        status: "Accepted",
+      },
+    };
+    this.sendResult(messageId, responsePayload);
   }
 
 

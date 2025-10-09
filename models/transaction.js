@@ -1,28 +1,61 @@
 import mongoose from 'mongoose';
 
-
-// --- Sub-Schema for real-time Meter Values ---
-const MeterValueSchema = new mongoose.Schema({
-    timestamp: { type: Date, required: true },
-    meterValue: { type: Number, required: true }, // The total meter value at this point (Wh)
-
-    // Structure for detailed electrical parameters (optional but recommended for robust data)
-    sampledValue: [{
-        measurand: { type: String },
-        value: { type: String },
-        unit: { type: String }
-    }]
+// --- 1. Sub-Schema for Sampled Electrical Values (from sampledValue array) ---
+// This schema represents a single electrical measurement (e.g., 'Voltage', 'Current.L1').
+const SampledValueSchema = new mongoose.Schema({
+    value: { 
+        type: String, 
+        required: true 
+    }, // REQUIRED by OCPP, sent as a string (e.g., "1200.5")
+    measurand: { 
+        type: String, 
+        // Optional: Can add enum validation here if needed
+    },
+    unit: { 
+        type: String 
+    },
+    context: { 
+        type: String 
+    },
+    // Include other optional fields (format, phase, location) if you plan to store them
+    phase: {
+        type: String
+    },
+    location: {
+        type: String
+    }
 }, { _id: false });
 
-// --- Main Transaction Schema ---
+// ---------------------------------------------------------------------------------
+
+// --- 2. Sub-Schema for a Time-Stamped Meter Reading (from meterValue array) ---
+// This schema represents one element from the 'meterValue' array in MeterValues.req
+// It links a timestamp to an array of specific SampledValue measurements.
+const MeterValueSchema = new mongoose.Schema({
+    timestamp: { 
+        type: Date, 
+        required: true 
+    },
+    // The total register reading is often implicit in the 'sampledValue' array 
+    // using the 'Energy.Active.Import.Register' measurand.
+    
+    // An array of the specific electrical measurements taken at this timestamp
+    sampledValues: {
+        type: [SampledValueSchema], // Array of the SampledValue sub-schema
+        required: true, 
+        minlength: 1 // Must contain at least one sampled value
+    }
+}, { _id: false });
+
+// ---------------------------------------------------------------------------------
+
+// --- 3. Main Transaction Schema ---
 const TransactionSchema = new mongoose.Schema({
     // --- 1. Linkage to Charge Point ---
-    // The link to the parent Charge Point document
     chargePoint: {
-        type: String,  // Assuming you name your CP model 'ChargePoint'
+        type: String,
         required: true
     },
-    // The specific connector on the CP used for this transaction
     connectorId: { type: Number, required: true },
 
     // --- 2. Core OCPP Identifiers ---
@@ -41,13 +74,17 @@ const TransactionSchema = new mongoose.Schema({
         trim: true
     },
 
-    // --- 3. Start Transaction Data (from StartTransaction.req) ---
+    // --- 3. Start Transaction Data ---
     start_timestamp: { type: Date, required: true },
     meterStart: { type: Number, required: true }, // meterStart (Wh)
     reservationId: { type: Number, optional: true },
 
-    // --- 4. Intermediate Meter Data (from MeterValues.req) ---
-    meterValues: [MeterValueSchema], // Array of periodic meter and electrical readings
+    // --- 4. Meter Data Storage (UPDATED SECTION) ---
+    // The name of this field is often changed to be clearer than just 'meterValues'
+    readings: {
+        type: [MeterValueSchema], // Array of periodic meter and electrical readings
+        default: []
+    },
 
     // --- 5. Stop Transaction Data (from StopTransaction.req) ---
     isFinished: { type: Boolean, default: false, index: true }, // Status flag
@@ -58,7 +95,7 @@ const TransactionSchema = new mongoose.Schema({
     // --- 6. Billing & Metadata ---
     finalCost: { type: Number, default: 0 },
 
-}, { timestamps: true }); // Mongoose adds createdAt and updatedAt
+}, { timestamps: true });
 
 
 // Optional: Add custom validation logic before saving
