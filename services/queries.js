@@ -7,11 +7,12 @@ export async function createAndUpdateBootnotification(payload, ocppHandler) {
     const update = {
         vendor: payload.chargePointVendor,
         model: payload.chargePointModel,
-        serialNumber: ocppHandler.chargePointId,
+        serialNumber : ocppHandler.chargePointId,
         firmwareVersion: payload.firmwareVersion,
         lastBoot: new Date(),
         status: "Accepted",
         heartbeatInterval: 300,
+        connectors :payload.connectors,
     };
 
     const options = {

@@ -11,6 +11,7 @@ import {
 } from "./services/queries.js";
 import TransactionModel from "./models/transaction.js";
 import StartTransactionSchema from "./jsonSchemas/StartTransaction.json" with { type: "json" };
+import StopTransactionSchema from "./jsonSchemas/StopTransaction.json" with { type: "json" };
 import MeterValuesSchema from "./jsonSchemas/MeterValuesSchema.json" with { type: "json" };
 
 const ajv = new Ajv();
@@ -164,7 +165,7 @@ export class OcppHandler {
         };
       }
       console.log(`Authorize result for ${payload.idTag}: ${idtaginfo.status}`);
-      this.sendResult(messageId, { idtaginfo: idtaginfo });
+      this.sendResult(messageId, { idtaginfo });
     } catch (err) {
       console.error(`Error validating authorize request for idTag=${payload.idTag}`, err);
       this.sendResult(messageId, { idTagInfo: { status: "Error" } });
@@ -287,6 +288,7 @@ export class OcppHandler {
     }
   }
 
+  
   async handleMeterValues(messageId, payload) {
     console.log(`Received MeterValues from ${this.chargePointId}:`, payload);
 
@@ -351,20 +353,95 @@ export class OcppHandler {
     // this.sendResult(messageId, {});
   }
 
-  async handleStopTransaction(messageId, payload) {
+  // async handleStopTransaction(messageId, payload) {
+  //   console.log(
+  //     `Received StopTransaction from ${this.chargePointId}:`,
+  //     payload
+  //   );
+  //   // Logic to update the transaction record in MongoDB
+  //   const responsePayload = {
+  //     idTagInfo: {
+  //       status: "Accepted",
+  //     },
+  //   };
+  //   this.sendResult(messageId, responsePayload);
+  // }
+
+    async handleStopTransaction(messageId, payload) {
     console.log(
       `Received StopTransaction from ${this.chargePointId}:`,
       payload
     );
-    // Logic to update the transaction record in MongoDB
-    const responsePayload = {
-      idTagInfo: {
-        status: "Accepted",
-      },
-    };
-    this.sendResult(messageId, responsePayload);
-  }
 
+    if (
+      !(await this.validatePayload(StopTransactionSchema, payload))
+    ) {
+      console.warn(`Validation failed for CP ${this.chargePointId}:`);
+      return this.sendError(messageId, 'ProtocolError', `Invalid payload`);
+    }
+
+    // --- 2. Extract Data from Payload ---
+    const {
+      meterStop,
+      timestamp,
+      transactionId,
+      reason ="local",
+      idTag,
+      transactionData =[]
+    } = payload;
+
+    try {
+      // --- 4. Database Operation: find the Transaction in the DB ---
+      const existingTxn = await TransactionModel.findOne({
+        csTransactionId: transactionId, 
+        isFinished: false, 
+      });
+
+      if(!existingTxn){
+        console.warn(`No active transaction found ${transactionId}`);
+        return this.sendError(messageId,"Transaction not found or already stopped");
+      }
+
+      // --- update the transaction details ---
+      existingTxn.meterStop = meterStop;
+      existingTxn.stop_timestamp = timestamp;
+      existingTxn.reason = reason,
+      existingTxn.transactionData = transactionData,
+      existingTxn.isFinished = true;
+
+      await existingTxn.save();
+
+       console.debug(`Transaction ${transactionId} stopped successfully for CP ${this.chargePointId}`);
+
+      // --- Update charge point connector status ---
+      await chargePoint.updateOne(
+        {
+          serialNumber: this.chargePointId,
+          'connectors.connectorId':existingTxn.connectorId
+        },
+        {
+          $set:{
+              'connectors.$.status': 'Available',
+              'connectors.$.currentTransactionId': null
+          }
+        }
+      )
+
+      const confPayload ={
+        idTagInfo:{
+          status: "Accepted"
+        }
+      }
+      this.sendResult(messageId, confPayload);
+
+    } catch (error) {
+      console.error('Error handling StartTransaction:', error);
+
+      this.sendError(messageId, "GenericError",
+        "Internal error while processing StopTransaction.",
+        );
+    }
+  }
 
   async handleStatusNotification(messageId, payload) {
     const StatusNotificationSchema = {
