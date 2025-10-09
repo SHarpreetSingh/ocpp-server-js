@@ -126,7 +126,7 @@ export class OcppHandler {
 
   async validatePayload(ActionSchema, payload) {
     const validate = ajv.compile(ActionSchema);
-    console.log("validate",validate)
+    console.debug("validate",validate)
     return validate(payload);
   }
 
@@ -148,8 +148,8 @@ export class OcppHandler {
       });
     }
     try {
-      const IDTAG = await idTag.findOne({ idTagInfo: payload.idTag });
-
+      const IDTAG = await idTag.findOne({ "idTag": payload.idTag });
+      // console.log(IDTAG)
       let idtaginfo;
       const now = new Date();
       if (!IDTAG) {
@@ -163,7 +163,7 @@ export class OcppHandler {
           parentTag: IDTAG.parentTag,
         };
       }
-      console.log(`Authorize result for ${payload.idTag}: ${idTagInfo.status}`);
+      console.log(`Authorize result for ${payload.idTag}: ${idtaginfo.status}`);
       this.sendResult(messageId, { idtaginfo: idtaginfo });
     } catch (err) {
       console.error(`Error validating authorize request for idTag=${payload.idTag}`, err);
@@ -206,7 +206,19 @@ export class OcppHandler {
         `Invalid payload`);
     }
 
-    //***** */ Connector Availability Check
+    // //***** */ Connector Availability Check
+    // const chargePointDoc = await chargePoint.findOne({ serialNumber: this.chargePointId });
+    // const connector = chargePointDoc.connectors.find(c => c.connectorId === connectorId);
+
+    // if (!connector || connector.status !== 'Preparing') {
+    //   // If the status is already Charging, Suspended, or Available (not plugged in)
+    //   console.warn(`Connector ${connectorId} on CP ${this.chargePointId} is not in 'Preparing' state.`);
+    //   return this.sendResult(messageId, {
+    //     idTagInfo: { status: 'Rejected' },
+    //     transactionId: 0
+    //   });
+    // }
+
     //*****  2. ID Tag Status Check */
 
     // --- 2. Extract Data from Payload ---
@@ -232,7 +244,7 @@ export class OcppHandler {
         isFinished: false, // Mark as active
       });
 
-      console.debug("newTransaction", newTransaction)
+      // console.debug("newTransaction", newTransaction)
 
       // --- 5. Database Operation: UPDATE Charge Point Connector Status ---
       // We update your existing CP schema to reflect the active session

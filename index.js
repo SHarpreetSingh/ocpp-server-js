@@ -28,7 +28,7 @@ try {
     // path: "/ocpp",
   });
 
-  wss.on("connection", (socket, req) => {
+  wss.on("connection",async (socket, req) => {
     const urlParts = req.url.split("/");
 
     const CpID = urlParts[urlParts.length - 1] || "unknown";
@@ -46,10 +46,16 @@ try {
 
     socket.on("message", ocppHandler.onMessage.bind(ocppHandler));
 
-    socket.on("close", (message) => {
-      console.log(`closed connection from ${CpID} `);
-      logger.info(`closed connection from ${CpID} `);
-    });
+    // if (socket && socket.readyState === socket.OPEN) {
+        // await new Promise((resolve) => {
+          socket.on("close", (message) => {
+            socket.close();
+            // resolve()
+            console.log(`closed connection from ${CpID} `);
+            logger.info(`closed connection from ${CpID} `);
+          });
+        // })
+    // }
   });
 
   const PORT = 3000;
@@ -62,7 +68,7 @@ try {
     const serialNumber = req.params.cpId;
 
     const { type, connectorId } = req.body;
-    console.log("hit api", req.params, "req.body",req.body);
+    console.log("hit api", req.params, "req.body", req.body);
 
     const handlerInstance = connectedChargePoints.get(serialNumber);
     // console.log("handlerInstance", handlerInstance);
@@ -80,9 +86,9 @@ try {
 
     try {
       const result = await handlerInstance.changeAvailability(serialNumber, type, connectorId);
-      res.status(200).json({ status:"Accepted", connectorId });
+      res.status(200).json({ status: "Accepted", connectorId });
     } catch (error) {
-      res.status(500).json({ status:"Rejected",message: '❌ Failed to send ChangeAvailability command.', error: error.message });
+      res.status(500).json({ status: "Rejected", message: '❌ Failed to send ChangeAvailability command.', error: error.message });
     }
   });
 
