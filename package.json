@@ -20,6 +20,7 @@
     "mongodb": "^6.20.0",
     "mongoose": "^8.18.1",
     "nodemon": "^3.1.10",
+    "prettier": "^3.6.2",
     "websocket": "^1.0.35",
     "winston": "^3.17.0",
     "ws": "^8.18.3"
