@@ -69,7 +69,7 @@ export async function updateConnectorStatus(serialNumber, status, connectorId) {
                 new: true,
             }
         );
-        console.log("updatedCP", updatedCP)
+        // console.log("updatedCP", updatedCP)
 
         if (!updatedCP) {
             console.log(`Charge Point ${serialNumber} or Connector ${connectorId} not found.`);

@@ -127,7 +127,7 @@ export class OcppHandler {
 
   async validatePayload(ActionSchema, payload) {
     const validate = ajv.compile(ActionSchema);
-    console.debug("validate",validate)
+    // console.debug("validate", validate)
     return validate(payload);
   }
 
@@ -143,10 +143,8 @@ export class OcppHandler {
     };
 
     if (!(await this.validatePayload(authorizeSchema, payload))) {
-      console.warn("*** ❌ Bad request****",)
-      return this.sendResult(messageId, {
-        status: "Rejected",
-      });
+      console.warn("*** ❌ Bad request****")
+      return this.sendError(messageId,"FormatViolation","Invalid payload");
     }
     try {
       const IDTAG = await idTag.findOne({ "idTag": payload.idTag });
@@ -155,8 +153,10 @@ export class OcppHandler {
       const now = new Date();
       if (!IDTAG) {
         idtaginfo = { status: "Invalid" };
+        return this.sendError(messageId, idtaginfo);
       } else if (IDTAG.expiryDate && IDTAG.expiryDate < now) {
         idtaginfo = { status: "Expired", expiryDate: IDTAG.expiryDate, parentTag: IDTAG.parentTag, };
+        return this.sendError(messageId,idtaginfo );
       } else {
         idtaginfo = {
           status: "Accepted",
@@ -165,10 +165,10 @@ export class OcppHandler {
         };
       }
       console.log(`Authorize result for ${payload.idTag}: ${idtaginfo.status}`);
-      this.sendResult(messageId, { idtaginfo });
+      return this.sendResult(messageId, { idtaginfo });
     } catch (err) {
       console.error(`Error validating authorize request for idTag=${payload.idTag}`, err);
-      this.sendResult(messageId, { idTagInfo: { status: "Error" } });
+      return this.sendError(messageId, { idTagInfo: { status: "Error" } });
     }
 
   }
@@ -176,8 +176,6 @@ export class OcppHandler {
   async handleHeartbeat(messageId) {
     const now = new Date();
     console.log(`[${new Date().toISOString()}] Heartbeat received from ${this.chargePointId}`);
-
-    this.sendResult(messageId, { currentTime: now.toISOString() });
 
     try {
       await chargePoint.findOneAndUpdate(
@@ -188,8 +186,14 @@ export class OcppHandler {
         },
         { upsert: true, runValidators: true }
       );
+
+      return this.sendResult(messageId, { currentTime: now.toISOString() });
+
     } catch (err) {
       console.error(`Error updating heartbeat for ${this.chargePointId}`, err);
+      return this.sendError(messageId, "GenericError",
+        "Internal error while processing Heartbeat.",
+      );
     }
   }
 
@@ -203,7 +207,7 @@ export class OcppHandler {
       !(await this.validatePayload(StartTransactionSchema, payload))
     ) {
       console.warn(`Validation failed for CP ${this.chargePointId}:`);
-      return this.sendError(messageId, 'ProtocolError',
+      return this.sendError(messageId, 'FormatViolation',
         `Invalid payload`);
     }
 
@@ -288,7 +292,7 @@ export class OcppHandler {
     }
   }
 
-  
+
   async handleMeterValues(messageId, payload) {
     console.log(`Received MeterValues from ${this.chargePointId}:`, payload);
 
@@ -296,7 +300,7 @@ export class OcppHandler {
       !(await this.validatePayload(MeterValuesSchema, payload))
     ) {
       console.warn(`Validation failed for CP ${this.chargePointId}:`);
-      return this.sendError(messageId, 'ProtocolError',
+      return this.sendError(messageId, 'FormatViolation',
         `Invalid payload`);
     }
 
@@ -346,28 +350,11 @@ export class OcppHandler {
       // IMPORTANT: The Central System MUST still respond with MeterValues.conf 
       // even if its internal database operation fails, provided the message 
       // format was valid (as per step 1).
-      this.sendResult(messageId, {});
+      this.sendError(messageId, {});
     }
-
-    // // Logic to save meter values to MongoDB
-    // this.sendResult(messageId, {});
   }
 
-  // async handleStopTransaction(messageId, payload) {
-  //   console.log(
-  //     `Received StopTransaction from ${this.chargePointId}:`,
-  //     payload
-  //   );
-  //   // Logic to update the transaction record in MongoDB
-  //   const responsePayload = {
-  //     idTagInfo: {
-  //       status: "Accepted",
-  //     },
-  //   };
-  //   this.sendResult(messageId, responsePayload);
-  // }
-
-    async handleStopTransaction(messageId, payload) {
+  async handleStopTransaction(messageId, payload) {
     console.log(
       `Received StopTransaction from ${this.chargePointId}:`,
       payload
@@ -377,7 +364,7 @@ export class OcppHandler {
       !(await this.validatePayload(StopTransactionSchema, payload))
     ) {
       console.warn(`Validation failed for CP ${this.chargePointId}:`);
-      return this.sendError(messageId, 'ProtocolError', `Invalid payload`);
+      return this.sendError(messageId, 'FormatViolation', `Invalid payload`);
     }
 
     // --- 2. Extract Data from Payload ---
@@ -385,50 +372,48 @@ export class OcppHandler {
       meterStop,
       timestamp,
       transactionId,
-      reason ="local",
-      idTag,
-      transactionData =[]
+      reason = "local",
+      transactionData = []
     } = payload;
 
     try {
       // --- 4. Database Operation: find the Transaction in the DB ---
       const existingTxn = await TransactionModel.findOne({
-        csTransactionId: transactionId, 
-        isFinished: false, 
+        csTransactionId: transactionId,
+        isFinished: false,
       });
 
-      if(!existingTxn){
+      if (!existingTxn) {
         console.warn(`No active transaction found ${transactionId}`);
-        return this.sendError(messageId,"Transaction not found or already stopped");
+        return this.sendError(messageId, "Transaction not found or already stopped");
       }
 
       // --- update the transaction details ---
       existingTxn.meterStop = meterStop;
       existingTxn.stop_timestamp = timestamp;
       existingTxn.reason = reason,
-      existingTxn.transactionData = transactionData,
-      existingTxn.isFinished = true;
+        existingTxn.isFinished = true;
 
       await existingTxn.save();
 
-       console.debug(`Transaction ${transactionId} stopped successfully for CP ${this.chargePointId}`);
+      console.debug(`Transaction ${transactionId} stopped successfully for CP ${this.chargePointId}`);
 
       // --- Update charge point connector status ---
       await chargePoint.updateOne(
         {
           serialNumber: this.chargePointId,
-          'connectors.connectorId':existingTxn.connectorId
+          'connectors.connectorId': existingTxn.connectorId
         },
         {
-          $set:{
-              'connectors.$.status': 'Available',
-              'connectors.$.currentTransactionId': null
+          $set: {
+            'connectors.$.status': 'Available',
+            'connectors.$.currentTransactionId': null
           }
         }
       )
 
-      const confPayload ={
-        idTagInfo:{
+      const confPayload = {
+        idTagInfo: {
           status: "Accepted"
         }
       }
@@ -439,7 +424,7 @@ export class OcppHandler {
 
       this.sendError(messageId, "GenericError",
         "Internal error while processing StopTransaction.",
-        );
+      );
     }
   }
 

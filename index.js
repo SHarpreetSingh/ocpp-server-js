@@ -28,10 +28,19 @@ try {
     // path: "/ocpp",
   });
 
-  wss.on("connection",async (socket, req) => {
+  wss.on("connection", async (socket, req) => {
     const urlParts = req.url.split("/");
 
-    const CpID = urlParts[urlParts.length - 1] || "unknown";
+    const CpID = urlParts[urlParts.length - 1];
+
+    if (!CpID || CpID.length === 0) {
+      console.error(`Rejected connection: Missing Charge Point ID in URL: ${req.url}`);
+      // In the context of a WSS server, the standard response for this error 
+      // is to immediately terminate the connection.
+      socket.terminate();
+      return;
+    }
+
     console.log(`CP connected: ${CpID}`);
     logger.info(`CP connected: ${CpID}`);
     socket.on("message", (message) => {
@@ -47,14 +56,14 @@ try {
     socket.on("message", ocppHandler.onMessage.bind(ocppHandler));
 
     // if (socket && socket.readyState === socket.OPEN) {
-        // await new Promise((resolve) => {
-          socket.on("close", (message) => {
-            socket.close();
-            // resolve()
-            console.log(`closed connection from ${CpID} `);
-            logger.info(`closed connection from ${CpID} `);
-          });
-        // })
+    // await new Promise((resolve) => {
+    socket.on("close", (message) => {
+      socket.close();
+      // resolve()
+      console.log(`closed connection from ${CpID} `);
+      logger.info(`closed connection from ${CpID} `);
+    });
+    // })
     // }
   });
 
@@ -93,5 +102,5 @@ try {
   });
 
 } catch (err) {
-  console.log(err);
+  console.log("err", err);
 }

@@ -6,15 +6,18 @@
             "maxLength": 20
         },
         "meterStop": {
-            "type": "integer"
+            "type": "integer",
+            "minimum": 1
         },
         "timestamp": {
             "type": "string",
             "format": "date-time"
         },
         "transactionId": {
-            "type": "integer"
-        },
+        "type": "integer",
+        "minimum": 1, 
+        "description": "The ID of the transaction which is to be stopped/sampled. Must be greater than 0."
+},
         "reason": {
             "type": "string",
             "additionalProperties": false,
