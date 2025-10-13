@@ -1,13 +1,13 @@
 // ocppHandler.js
 import Ajv from "ajv";
-import addFormats from "ajv-formats"
+import addFormats from "ajv-formats";
 import chargePoint from "./models/chargePoint.js";
 
 import logger from "./logger.js";
 import idTag from "./models/IdTag.js";
 import {
   createAndUpdateBootnotification,
-  updateConnectorStatus
+  updateConnectorStatus,
 } from "./services/queries.js";
 import TransactionModel from "./models/transaction.js";
 import StartTransactionSchema from "./jsonSchemas/StartTransaction.json" with { type: "json" };
@@ -15,8 +15,7 @@ import StopTransactionSchema from "./jsonSchemas/StopTransaction.json" with { ty
 import MeterValuesSchema from "./jsonSchemas/MeterValuesSchema.json" with { type: "json" };
 import { logError } from "./Utilitiy/LoggerHelper.js";
 const ajv = new Ajv();
-addFormats(ajv)
-
+addFormats(ajv);
 
 export class OcppHandler {
   constructor(ws, chargePointId) {
@@ -60,27 +59,27 @@ export class OcppHandler {
     switch (action) {
       case "BootNotification":
         // A Charge Point MUST again contact the Central System by sending a BootNotification request after a restart.
-        this.handleBootNotification(messageId, payload,message);
+        this.handleBootNotification(messageId, payload, message);
         break;
       case "Authorize":
-        this.handleAuthorize(messageId, payload,message);
+        this.handleAuthorize(messageId, payload, message);
         break;
       case "StartTransaction":
         // The Charge Point SHOULD deliver transaction-related messages to the Central System in chronological order as soon as possible.
-        this.handleStartTransaction(messageId, payload,message);
+        this.handleStartTransaction(messageId, payload, message);
         break;
       case "StopTransaction":
-        this.handleStopTransaction(messageId, payload,message);
+        this.handleStopTransaction(messageId, payload, message);
         break;
       case "Heartbeat":
-        this.handleHeartbeat(messageId,message);
+        this.handleHeartbeat(messageId, message);
         break;
       case "MeterValues":
-        this.handleMeterValues(messageId, payload,message);
+        this.handleMeterValues(messageId, payload, message);
         break;
-      case 'StatusNotification':
+      case "StatusNotification":
         // 3. If valid, process the message
-        this.handleStatusNotification(messageId, payload,messsage);
+        this.handleStatusNotification(messageId, payload, message);
         break;
 
       default:
@@ -93,7 +92,7 @@ export class OcppHandler {
   }
 
   // Implement handlers for each OCPP action
-  async handleBootNotification(messageId, payload,message) {
+  async handleBootNotification(messageId, payload, message) {
     console.log(`Received BootNotification from ${this.chargePointId}:`);
 
     const bootNotificationSchema = {
@@ -105,30 +104,28 @@ export class OcppHandler {
       required: ["chargePointVendor", "chargePointModel"],
     };
 
-    if (
-      !(await this.validatePayload(bootNotificationSchema, payload))
-    ) {
-      console.warn("*** ❌ Bad request****",);
-      logError({
-      action: "Authorize",
-      status: "Rejected",
-      reason: "Schema validation failed",
-      messageId,
-      payload,
-    });
-    //  logger.error(
-    //     `Rejected request due to invalid Schema : ${message} 
-    //     Response : ${messageId}, ${JSON.stringify({status: "Rejected",
-    //       currentTime: new Date().toISOString(),interval: 0,})}`);
+    if (!(await this.validatePayload(bootNotificationSchema, payload))) {
+      logger.error(
+        `Rejected request due to invalid Schema : ${message} 
+        Response : ${messageId}, ${JSON.stringify({
+          status: "Rejected",
+          currentTime: new Date().toISOString(),
+          interval: 0,
+        })}`
+      );
+      // });
+      //  logger.error(
+      //     `Rejected request due to invalid Schema : ${message}
+      //     Response : ${messageId}, ${JSON.stringify({status: "Rejected",
+      //       currentTime: new Date().toISOString(),interval: 0,})}`);
       return this.sendError(messageId, {
         status: "Rejected",
         currentTime: new Date().toISOString(),
         interval: 0,
       });
-     
     }
 
-    await createAndUpdateBootnotification(payload, this,messageId,message)
+    await createAndUpdateBootnotification(payload, this, messageId, message);
 
     const responsePayload = {
       status: "Accepted",
@@ -143,7 +140,7 @@ export class OcppHandler {
     return validate(payload);
   }
 
-  async handleAuthorize(messageId, payload,message) {
+  async handleAuthorize(messageId, payload, message) {
     console.log(`Received Authorize from ${this.chargePointId}:`, payload);
 
     const authorizeSchema = {
@@ -155,22 +152,26 @@ export class OcppHandler {
     };
 
     if (!(await this.validatePayload(authorizeSchema, payload))) {
-      console.warn("*** ❌ Bad request****",);
-     logger.error(`Request rejected due to invalid schema : ${message}
+      console.warn("*** ❌ Bad request****");
+      logger.error(`Request rejected due to invalid schema : ${message}
       Response : ${messageId} ${JSON.stringify({ status: "Rejected" })}`);
       return this.sendResult(messageId, {
         status: "Rejected",
       });
     }
     try {
-      const IDTAG = await idTag.findOne({ "idTag": payload.idTag });
+      const IDTAG = await idTag.findOne({ idTag: payload.idTag });
       // console.log(IDTAG)
       let idtaginfo;
       const now = new Date();
       if (!IDTAG) {
         idtaginfo = { status: "Invalid" };
       } else if (IDTAG.expiryDate && IDTAG.expiryDate < now) {
-        idtaginfo = { status: "Expired", expiryDate: IDTAG.expiryDate, parentTag: IDTAG.parentTag, };
+        idtaginfo = {
+          status: "Expired",
+          expiryDate: IDTAG.expiryDate,
+          parentTag: IDTAG.parentTag,
+        };
       } else {
         idtaginfo = {
           status: "Accepted",
@@ -179,27 +180,29 @@ export class OcppHandler {
         };
       }
 
-       // Log only if status is Invalid or Rejected
-    if (idtaginfo.status === "Invalid" || idtaginfo.status === "Rejected") {
-      logger.error(
-        `Request rejected due to [${idtaginfo.status}] status
+      // Log only if status is Invalid or Rejected
+      if (idtaginfo.status === "Invalid" || idtaginfo.status === "Rejected") {
+        logger.error(
+          `Request rejected due to [${idtaginfo.status}] status
          Request : ${message}
          response : ${idtaginfo}`
-      );
-    }
+        );
+      }
 
       console.log(`Authorize result for ${payload.idTag}: ${idtaginfo.status}`);
       this.sendResult(messageId, { idtaginfo });
     } catch (err) {
-     logger.error(`Error validating authorize request for idTag: ${message} 
+      logger.error(`Error validating authorize request for idTag: ${message} 
       response : ${payload.idTag}: ${err.message}\n${err.stack}`);
       this.sendResult(messageId, { idTagInfo: { status: "Error" } });
     }
   }
 
-  async handleHeartbeat(messageId,message) {
-  const now = new Date();
-    console.log(`[${new Date().toISOString()}] Heartbeat received from ${this.chargePointId}`);
+  async handleHeartbeat(messageId, message) {
+    const now = new Date();
+    console.log(
+      `[${new Date().toISOString()}] Heartbeat received from ${this.chargePointId}`
+    );
 
     this.sendResult(messageId, { currentTime: now.toISOString() });
 
@@ -214,24 +217,23 @@ export class OcppHandler {
       );
     } catch (err) {
       console.error(`Error updating heartbeat for ${this.chargePointId}`, err);
-      logger.error(`Error updating heartbeat for ${this.chargePointId}: ${err.message}\n${err.stack}`);
+      logger.error(
+        `Error updating heartbeat for ${this.chargePointId}: ${err.message}\n${err.stack}`
+      );
     }
   }
 
-  async handleStartTransaction(messageId, payload,message) {
+  async handleStartTransaction(messageId, payload, message) {
     console.log(
       `Received StartTransaction from ${this.chargePointId}:`,
       payload
     );
 
-    if (
-      !(await this.validatePayload(StartTransactionSchema, payload))
-    ) {
+    if (!(await this.validatePayload(StartTransactionSchema, payload))) {
       console.warn(`Validation failed for CP ${this.chargePointId}:`);
       logger.error(`Request rejected due to invalid payload :  [${message}] `);
 
-      return this.sendError(messageId, 'ProtocolError',
-        `Invalid payload`);
+      return this.sendError(messageId, "ProtocolError", `Invalid payload`);
     }
 
     // //***** */ Connector Availability Check
@@ -250,16 +252,11 @@ export class OcppHandler {
     //*****  2. ID Tag Status Check */
 
     // --- 2. Extract Data from Payload ---
-    const {
-      connectorId,
-      idTag,
-      meterStart,
-      timestamp,
-    } = payload;
+    const { connectorId, idTag, meterStart, timestamp } = payload;
 
     // --- 3. Validate Transaction Prerequisites (Optional but recommended) ---
     // (e.g., check if the CP's connector is actually in 'Preparing' status)
-    const txnId = Math.floor(Math.random() * 1000)
+    const txnId = Math.floor(Math.random() * 1000);
     try {
       // --- 4. Database Operation: CREATE Transaction ---
       const newTransaction = await TransactionModel.create({
@@ -279,13 +276,13 @@ export class OcppHandler {
       await chargePoint.updateOne(
         {
           serialNumber: this.chargePointId,
-          'connectors.connectorId': connectorId
+          "connectors.connectorId": connectorId,
         },
         {
           $set: {
-            'connectors.$.status': 'Charging', // Status changes from 'Preparing' to 'Charging'
-            'connectors.$.currentTransactionId': txnId
-          }
+            "connectors.$.status": "Charging", // Status changes from 'Preparing' to 'Charging'
+            "connectors.$.currentTransactionId": txnId,
+          },
         }
       );
 
@@ -293,62 +290,68 @@ export class OcppHandler {
       const confPayload = {
         // The IdTagInfo should reflect the current authorization status.
         idTagInfo: {
-          status: 'Accepted'
+          status: "Accepted",
           // Optionally add parentIdTag, expiryDate
         },
-        transactionId: txnId // KEY: The CP must use this ID for all subsequent MeterValues and StopTransaction requests
+        transactionId: txnId, // KEY: The CP must use this ID for all subsequent MeterValues and StopTransaction requests
       };
 
       // This utility function packages the response and sends it over the WebSocket.
       this.sendResult(messageId, confPayload);
-
     } catch (error) {
-      console.error('Error handling StartTransaction:', error);
+      console.error("Error handling StartTransaction:", error);
 
       // --- 7. Handle Error & Send SOAP/JSON Fault (or a non-Accepted CONF) ---
-      // In a real system, you would log the error and send a specific OCPP fault response 
+      // In a real system, you would log the error and send a specific OCPP fault response
       // if the database failed or validation failed.
-     logger.error(`Request Rejected by Central System — Policy or authorization failed : ${message}`);
-      this.sendError(messageId, "GenericError",
+      logger.error(
+        `Request Rejected by Central System — Policy or authorization failed : ${message}`
+      );
+      this.sendError(
+        messageId,
+        "GenericError",
         "Rejected by Central System: Policy or authorization failed.",
-        {});
+        {}
+      );
     }
   }
 
-  async handleMeterValues(messageId, payload,message) {
+  async handleMeterValues(messageId, payload, message) {
     console.log(`Received MeterValues from ${this.chargePointId}:`, payload);
-    if (
-      !(await this.validatePayload(MeterValuesSchema, payload))
-    ) {
+    if (!(await this.validatePayload(MeterValuesSchema, payload))) {
       console.warn(`Validation failed for CP ${this.chargePointId}:`);
-     logger.error(`Request rejected due to invalid schema ${message}`);
-      return this.sendError(messageId, 'ProtocolError',
-        `Invalid payload`);
+      logger.error(`Request rejected due to invalid schema ${message}`);
+      return this.sendError(messageId, "ProtocolError", `Invalid payload`);
     }
 
     // --- 2. Extract Data from Payload ---
     const {
       connectorId,
-      meterValue, // This is an array of MeterValue objects 
-      transactionId // Optional field 
+      meterValue, // This is an array of MeterValue objects
+      transactionId, // Optional field
     } = payload;
 
     try {
-
       // a. Lookup the Transaction (If applicable)
       // Find the active transaction in the database using the CS transaction ID
       const targetTransaction = await TransactionModel.findOne({
         csTransactionId: transactionId,
-        isFinished: false // Ensure the transaction is still active
+        isFinished: false, // Ensure the transaction is still active
       });
 
       if (!targetTransaction) {
-        logger.error(`Received MeterValues for unknown or stale transaction ID: ${transactionId}. Proceeding to log data without internal transaction link.`);
-        console.warn(`Received MeterValues for unknown or stale transaction ID: ${transactionId}. Proceeding to log data without internal transaction link.`);
+        logger.error(
+          `Received MeterValues for unknown or stale transaction ID: ${transactionId}. Proceeding to log data without internal transaction link.`
+        );
+        console.warn(
+          `Received MeterValues for unknown or stale transaction ID: ${transactionId}. Proceeding to log data without internal transaction link.`
+        );
         return this.sendResult(messageId, {});
       }
 
-      console.debug(`Stored ${meterValue.length} meter value reading(s) for Connector ${connectorId}.`);
+      console.debug(
+        `Stored ${meterValue.length} meter value reading(s) for Connector ${connectorId}.`
+      );
 
       // 3. Database Operation: Push the new readings into the 'readings' array
       const updateResult = await TransactionModel.updateOne(
@@ -357,21 +360,25 @@ export class OcppHandler {
           // The $push operator appends the reading to the array
           // $each allows you to push multiple elements in a single operation
           $push: {
-            readings: { $each: meterValue }
-          }
+            readings: { $each: meterValue },
+          },
         }
       );
 
       // --- 4. Send CONFIRMATION to the Charge Point ---
-      // MeterValues.conf has an empty payload 
+      // MeterValues.conf has an empty payload
       const confPayload = {};
       this.sendResult(messageId, confPayload);
-
     } catch (error) {
-      console.error(`Internal Error storing MeterValues for CP ${this.chargePointId}:`, error);
-       logger.error(`Internal Error storing MeterValues for CP ${error.message}`);
-      // IMPORTANT: The Central System MUST still respond with MeterValues.conf 
-      // even if its internal database operation fails, provided the message 
+      console.error(
+        `Internal Error storing MeterValues for CP ${this.chargePointId}:`,
+        error
+      );
+      logger.error(
+        `Internal Error storing MeterValues for CP ${error.message}`
+      );
+      // IMPORTANT: The Central System MUST still respond with MeterValues.conf
+      // even if its internal database operation fails, provided the message
       // format was valid (as per step 1).
       this.sendResult(messageId, {});
     }
@@ -380,27 +387,24 @@ export class OcppHandler {
     // this.sendResult(messageId, {});
   }
 
-    async handleStopTransaction(messageId, payload,message) {
+  async handleStopTransaction(messageId, payload, message) {
     console.log(
       `Received StopTransaction from ${this.chargePointId}:`,
       payload
     );
 
-    if (
-      !(await this.validatePayload(StopTransactionSchema, payload))
-    ) {
+    if (!(await this.validatePayload(StopTransactionSchema, payload))) {
       console.warn(`Validation failed for CP ${this.chargePointId}:`);
-       logger.error(
-       JSON.stringify({
-       messageId,
-       errorType: "ProtocolError",
-       message: "Invalid payload",
-       time: new Date().toISOString(),
-  })
-);
+      logger.error(
+        JSON.stringify({
+          messageId,
+          errorType: "ProtocolError",
+          message: "Invalid payload",
+          time: new Date().toISOString(),
+        })
+      );
 
-      return this.sendError(messageId, 'ProtocolError', `Invalid payload`);
-      
+      return this.sendError(messageId, "ProtocolError", `Invalid payload`);
     }
 
     // --- 2. Extract Data from Payload ---
@@ -408,127 +412,145 @@ export class OcppHandler {
       meterStop,
       timestamp,
       transactionId,
-      reason ="local",
+      reason = "local",
       idTag,
-      transactionData =[]
+      transactionData = [],
     } = payload;
 
     try {
       // --- 4. Database Operation: find the Transaction in the DB ---
       const existingTxn = await TransactionModel.findOne({
-        csTransactionId: transactionId, 
-        isFinished: false, 
+        csTransactionId: transactionId,
+        isFinished: false,
       });
 
-      if(!existingTxn){
+      if (!existingTxn) {
         console.warn(`No active transaction found ${transactionId}`);
-      //  logger.error(`[${messageId}] Transaction not found or already stopped`);
-        return this.sendError(messageId,"Transaction not found or already stopped");
+        //  logger.error(`[${messageId}] Transaction not found or already stopped`);
+        return this.sendError(
+          messageId,
+          "Transaction not found or already stopped"
+        );
       }
 
       // --- update the transaction details ---
       existingTxn.meterStop = meterStop;
       existingTxn.stop_timestamp = timestamp;
-      existingTxn.reason = reason,
-      existingTxn.transactionData = transactionData,
-      existingTxn.isFinished = true;
+      ((existingTxn.reason = reason),
+        (existingTxn.transactionData = transactionData),
+        (existingTxn.isFinished = true));
 
       await existingTxn.save();
 
-       console.debug(`Transaction ${transactionId} stopped successfully for CP ${this.chargePointId}`);
+      console.debug(
+        `Transaction ${transactionId} stopped successfully for CP ${this.chargePointId}`
+      );
 
       // --- Update charge point connector status ---
       await chargePoint.updateOne(
         {
           serialNumber: this.chargePointId,
-          'connectors.connectorId':existingTxn.connectorId
+          "connectors.connectorId": existingTxn.connectorId,
         },
         {
-          $set:{
-              'connectors.$.status': 'Available',
-              'connectors.$.currentTransactionId': null
-          }
+          $set: {
+            "connectors.$.status": "Available",
+            "connectors.$.currentTransactionId": null,
+          },
         }
-      )
+      );
 
-      const confPayload ={
-        idTagInfo:{
-          status: "Accepted"
-        }
-      }
+      const confPayload = {
+        idTagInfo: {
+          status: "Accepted",
+        },
+      };
       this.sendResult(messageId, confPayload);
-
     } catch (error) {
-      console.error('Error handling StartTransaction:', error);
-    //  logger.error(
-    //  `[${messageId}] GenericError: Internal error while processing StopTransaction.`
-    // );
-      this.sendError(messageId, "GenericError","Internal error while processing StopTransaction.",);
+      console.error("Error handling StartTransaction:", error);
+      //  logger.error(
+      //  `[${messageId}] GenericError: Internal error while processing StopTransaction.`
+      // );
+      this.sendError(
+        messageId,
+        "GenericError",
+        "Internal error while processing StopTransaction."
+      );
     }
   }
 
-  async handleStatusNotification(messageId, payload,message) {
+  async handleStatusNotification(messageId, payload, message) {
     const StatusNotificationSchema = {
       type: "object",
       properties: {
         // connectorId: REQUIRED, must be an integer >= 1
         connectorId: {
           type: "integer",
-          minimum: 1
+          minimum: 1,
         },
 
         // status: REQUIRED, must be one of the specified strings
         status: {
           type: "string",
           enum: [
-            "Available", "Preparing", "Charging", "SuspendedEVSE",
-            "SuspendedEV", "Finishing", "Reserved", "Unavailable",
-            "Faulted"
-          ]
+            "Available",
+            "Preparing",
+            "Charging",
+            "SuspendedEVSE",
+            "SuspendedEV",
+            "Finishing",
+            "Reserved",
+            "Unavailable",
+            "Faulted",
+          ],
         },
 
         // errorCode: REQUIRED, must be a string (usually "NoError")
         errorCode: {
           type: "string",
-          maxLength: 50
+          maxLength: 50,
         },
 
         // timestamp: REQUIRED if status is not Available or Preparing
         timestamp: {
           type: "string",
-          format: "date-time" // Ensures ISO 8601 format
+          format: "date-time", // Ensures ISO 8601 format
         },
 
         // Optional Fields
         info: { type: "string", maxLength: 50 },
         vendorId: { type: "string", maxLength: 255 },
-        vendorErrorCode: { type: "string", maxLength: 50 }
+        vendorErrorCode: { type: "string", maxLength: 50 },
       },
 
       // Define the mandatory fields for the payload
       required: ["connectorId", "status", "errorCode"],
 
       // Disallow extra fields that are not part of the OCPP spec
-      additionalProperties: false
+      additionalProperties: false,
     };
 
-    const result = await this.validatePayload(StatusNotificationSchema, payload)
-    console.log("result", result)
+    const result = await this.validatePayload(
+      StatusNotificationSchema,
+      payload
+    );
+    console.log("result", result);
 
     if (!result) {
-      console.error('Validation Error for StatusNotification:', result);
-    logger.error(
-  `Request rejected due to invalid schema: ${JSON.stringify({
-    messageId,
-    errorType: "TypeConstraintViolation",
-    time: new Date().toISOString()
-  })}`
-);
+      console.error("Validation Error for StatusNotification:", result);
+      logger.error(
+        `Request rejected due to invalid schema: ${JSON.stringify({
+          messageId,
+          errorType: "TypeConstraintViolation",
+          time: new Date().toISOString(),
+        })}`
+      );
 
       // 2. Reject the non-compliant message
       // Send a CALLERROR back to the CP instead of processing.
       this.sendError(
-        messageId,"TypeConstraintViolation",
+        messageId,
+        "TypeConstraintViolation",
         "Payload fields did not meet OCPP specification."
       );
       return; // Stop processing
@@ -538,7 +560,7 @@ export class OcppHandler {
     // Log the event for debugging
     console.log(
       `Received StatusNotification from ${this.chargePointId} ` +
-      `for Connector ${connectorId}: ${status} (Error: ${errorCode || 'None'})`
+        `for Connector ${connectorId}: ${status} (Error: ${errorCode || "None"})`
     );
 
     try {
@@ -546,18 +568,19 @@ export class OcppHandler {
       const result = await updateConnectorStatus(
         this.chargePointId, // serialNumber
         status,
-        connectorId,
+        connectorId
         // We can also pass errorCode if we want to save it
       );
 
       // check if errr in db
       if (!result) {
-//        logger.error(
-//   `[${messageId}] InternalError: Central System database update failed.`
-// );
+        //        logger.error(
+        //   `[${messageId}] InternalError: Central System database update failed.`
+        // );
 
         return this.sendError(
-          messageId,"InternalError",
+          messageId,
+          "InternalError",
           "Central System database update failed."
         );
       }
@@ -565,32 +588,33 @@ export class OcppHandler {
       // send the confirmation back to the Charge Point
       // The StatusNotification.conf payload is empty {}
       this.sendResult(messageId, {});
-
     } catch (error) {
-      console.error(`❌ DB update failed for StatusNotification from ${this.chargePointId}:`, error);
-      // Even if the DB update fails, we typically send the confirmation 
+      console.error(
+        `❌ DB update failed for StatusNotification from ${this.chargePointId}:`,
+        error
+      );
+      // Even if the DB update fails, we typically send the confirmation
       // to prevent the CP from retrying, but log the error prominently.
       logger.error(`Error updating the request ${message}`);
       this.sendError(messageId, {});
     }
   }
 
-
   changeAvailability(serialNumber, type, connectorId) {
     const messageId = "change-availability-" + Date.now();
     const requestPayload = {
       connectorId: parseInt(connectorId), // Ensure it's an integer
-      type: type // The command type: "Operative" or "Inoperative"
+      type: type, // The command type: "Operative" or "Inoperative"
     };
 
     return new Promise(async (resolve, reject) => {
       this.callPromises.set(messageId, resolve(true));
       const message = [
-        2,                     // Message Type ID: 2 (CALL for request)
+        2, // Message Type ID: 2 (CALL for request)
         messageId,
         "ChangeAvailability",
-        requestPayload         // The payload object
-      ]
+        requestPayload, // The payload object
+      ];
 
       try {
         // 2. Send the message
@@ -627,10 +651,11 @@ export class OcppHandler {
 
   // Send a "CallResult" response back to the Charge Point
   sendResult(messageId, payload) {
-    console.log("payload=========>>>>>>>",payload);
+    console.log("payload=========>>>>>>>", payload);
     const response = [3, messageId, payload];
-    if(payload.status=='Rejected'){
-      logger.error(`Rejected response :${response}`) } 
+    if (payload.status == "Rejected") {
+      logger.error(`Rejected response :${response}`);
+    }
     logger.info(`-> Response to CP: ${JSON.stringify(response)}`);
     // console.info("sendResult", response);
     this.ws.send(JSON.stringify(response));
