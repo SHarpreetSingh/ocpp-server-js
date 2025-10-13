@@ -109,10 +109,10 @@ export class OcppHandler {
         action: message[2],
         messageId: messageId,
         payload: payload,
-        reason: "Rejected request due to invalid Schema",
+        reason: "FormatViolation",
       });
       // logger.error(
-      //   `Rejected request due to invalid Schema : ${message}
+      //   `FormatViolation : ${message}
       //   Response : ${messageId}, ${JSON.stringify({
       //     status: "Rejected",
       //     currentTime: new Date().toISOString(),
@@ -139,8 +139,7 @@ export class OcppHandler {
 
   async validatePayload(ActionSchema, payload) {
     const validate = ajv.compile(ActionSchema);
-    console.log("validate", validate);
-
+    // console.debug("validate", validate)
     return validate(payload);
   }
 
@@ -161,11 +160,9 @@ export class OcppHandler {
         action: message[2],
         messageId: messageId,
         payload: payload,
-        reason: "Rejected request due to invalid Schema",
+        reason: "FormatViolation",
       });
-      return this.sendResult(messageId, {
-        status: "Rejected",
-      });
+      return this.sendError(messageId, "FormatViolation", "Invalid payload");
     }
     try {
       const IDTAG = await idTag.findOne({ idTag: payload.idTag });
@@ -189,16 +186,19 @@ export class OcppHandler {
       }
 
       // Log only if status is Invalid or Rejected
-      if (idtaginfo.status === "Invalid" || idtaginfo.status === "Rejected") {
-        logger.error(
-          `Request rejected due to [${idtaginfo.status}] status
-         Request : ${message}
-         response : ${idtaginfo}`
-        );
+      if (idtaginfo.status !== "Accepted") {
+        logError({
+          action: message[2],
+          messageId,
+          payload,
+          idtaginfo: idTag,
+          reason: "IdTag is exired or invalid",
+        });
+        return this.sendError(messageId, idtaginfo);
       }
 
       console.log(`Authorize result for ${payload.idTag}: ${idtaginfo.status}`);
-      this.sendResult(messageId, { idtaginfo });
+      return this.sendResult(messageId, { idtaginfo });
     } catch (err) {
       logError({
         action: message[2],
@@ -206,9 +206,12 @@ export class OcppHandler {
         payload: payload,
         reason: "Error validating authorize request for idTag",
       });
-      // logger.error(`Error validating authorize request for idTag: ${message}
-      // response : ${payload.idTag}: ${err.message}\n${err.stack}`);
-      this.sendResult(messageId, { idTagInfo: { status: "Error" } });
+
+      console.error(
+        `Error validating authorize request for idTag=${payload.idTag}`,
+        err
+      );
+      return this.sendError(messageId, { idTagInfo: { status: "Error" } });
     }
   }
 
@@ -217,8 +220,6 @@ export class OcppHandler {
     console.log(
       `[${new Date().toISOString()}] Heartbeat received from ${this.chargePointId}`
     );
-
-    this.sendResult(messageId, { currentTime: now.toISOString() });
 
     try {
       await chargePoint.findOneAndUpdate(
@@ -229,11 +230,10 @@ export class OcppHandler {
         },
         { upsert: true, runValidators: true }
       );
+
+      return this.sendResult(messageId, { currentTime: now.toISOString() });
     } catch (err) {
       console.error(`Error updating heartbeat for ${this.chargePointId}`, err);
-      // logger.error(
-      //   `Error updating heartbeat for ${this.chargePointId}: ${err.message}\n${err.stack}`
-      // );
       logError({
         action: message[2],
         messageId: messageId,
@@ -241,6 +241,11 @@ export class OcppHandler {
         reason: "Error validating authorize request for idTag",
         stack: err.stack,
       });
+      return this.sendError(
+        messageId,
+        "GenericError",
+        "Internal error while processing Heartbeat."
+      );
     }
   }
 
@@ -256,10 +261,10 @@ export class OcppHandler {
         action: message[2],
         messageId: messageId,
         payload: payload,
-        reason: "Rejected request due to invalid Schema",
+        reason: "FormatViolation",
       });
 
-      return this.sendError(messageId, "ProtocolError", `Invalid payload`);
+      return this.sendError(messageId, "FormatViolation", `Invalid payload`);
     }
 
     // //***** */ Connector Availability Check
@@ -357,10 +362,10 @@ export class OcppHandler {
         action: message[2],
         messageId: messageId,
         payload: payload,
-        reason: "Rejected request due to invalid Schema",
+        reason: "FormatViolation",
       });
       // logger.error(`Request rejected due to invalid schema ${message}`);
-      return this.sendError(messageId, "ProtocolError", `Invalid payload`);
+      return this.sendError(messageId, "FormatViolation", `Invalid payload`);
     }
 
     // --- 2. Extract Data from Payload ---
@@ -426,11 +431,8 @@ export class OcppHandler {
       // IMPORTANT: The Central System MUST still respond with MeterValues.conf
       // even if its internal database operation fails, provided the message
       // format was valid (as per step 1).
-      this.sendResult(messageId, {});
+      this.sendError(messageId, {});
     }
-
-    // // Logic to save meter values to MongoDB
-    // this.sendResult(messageId, {});
   }
 
   async handleStopTransaction(messageId, payload, message) {
@@ -445,10 +447,10 @@ export class OcppHandler {
         action: message[2],
         messageId: messageId,
         payload: payload,
-        reason: "Rejected request due to invalid Schema",
+        reason: "FormatViolation",
       });
 
-      return this.sendError(messageId, "ProtocolError", `Invalid payload`);
+      return this.sendError(messageId, "FormatViolation", `Invalid payload`);
     }
 
     // --- 2. Extract Data from Payload ---
@@ -470,6 +472,12 @@ export class OcppHandler {
 
       if (!existingTxn) {
         console.warn(`No active transaction found ${transactionId}`);
+        logError({
+          action: message[2],
+          messageId: messageId,
+          payload: payload,
+          reason: "Not Found",
+        });
         //  logger.error(`[${messageId}] Transaction not found or already stopped`);
         return this.sendError(
           messageId,
@@ -480,9 +488,7 @@ export class OcppHandler {
       // --- update the transaction details ---
       existingTxn.meterStop = meterStop;
       existingTxn.stop_timestamp = timestamp;
-      ((existingTxn.reason = reason),
-        (existingTxn.transactionData = transactionData),
-        (existingTxn.isFinished = true));
+      ((existingTxn.reason = reason), (existingTxn.isFinished = true));
 
       await existingTxn.save();
 
@@ -512,9 +518,6 @@ export class OcppHandler {
       this.sendResult(messageId, confPayload);
     } catch (error) {
       console.error("Error handling StartTransaction:", error);
-      //  logger.error(
-      //  `[${messageId}] GenericError: Internal error while processing StopTransaction.`
-      // );
       logError({
         action: message[2],
         messageId: messageId,
@@ -522,7 +525,8 @@ export class OcppHandler {
         reason: "Error handling StartTransaction",
         stack: error.stack,
       });
-      this.sendError(
+
+      return this.sendError(
         messageId,
         "GenericError",
         "Internal error while processing StopTransaction."
@@ -600,7 +604,7 @@ export class OcppHandler {
         action: message[2],
         messageId: messageId,
         payload: payload,
-        reason: "Rejected request due to invalid Schema",
+        reason: "FormatViolation",
       });
 
       // 2. Reject the non-compliant message
