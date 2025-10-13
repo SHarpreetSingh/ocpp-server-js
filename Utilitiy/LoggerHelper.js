@@ -9,7 +9,7 @@ export function logError({
   idTagInfo = null,
   reason = null,
   error = null,
-  stack = null
+  stack = null,
 }) {
   const logEntry = {
     timestamp: new Date().toISOString(),
@@ -20,11 +20,13 @@ export function logError({
     payload,
     idTagInfo,
     error,
-    stack
+    stack,
   };
 
   // Remove null/undefined values for cleaner logs
-  Object.keys(logEntry).forEach(key => logEntry[key] == null && delete logEntry[key]);
+  Object.keys(logEntry).forEach(
+    (key) => logEntry[key] == null && delete logEntry[key]
+  );
 
-  logger.error(logEntry);
+  logger.error(JSON.stringify(logEntry));
 }

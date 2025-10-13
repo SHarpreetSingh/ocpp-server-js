@@ -105,19 +105,21 @@ export class OcppHandler {
     };
 
     if (!(await this.validatePayload(bootNotificationSchema, payload))) {
-      logger.error(
-        `Rejected request due to invalid Schema : ${message} 
-        Response : ${messageId}, ${JSON.stringify({
-          status: "Rejected",
-          currentTime: new Date().toISOString(),
-          interval: 0,
-        })}`
-      );
+      logError({
+        action: message[2],
+        messageId: messageId,
+        payload: payload,
+        reason: "Rejected request due to invalid Schema",
+      });
+      // logger.error(
+      //   `Rejected request due to invalid Schema : ${message}
+      //   Response : ${messageId}, ${JSON.stringify({
+      //     status: "Rejected",
+      //     currentTime: new Date().toISOString(),
+      //     interval: 0,
+      //   })}`
+      // );
       // });
-      //  logger.error(
-      //     `Rejected request due to invalid Schema : ${message}
-      //     Response : ${messageId}, ${JSON.stringify({status: "Rejected",
-      //       currentTime: new Date().toISOString(),interval: 0,})}`);
       return this.sendError(messageId, {
         status: "Rejected",
         currentTime: new Date().toISOString(),
@@ -137,6 +139,8 @@ export class OcppHandler {
 
   async validatePayload(ActionSchema, payload) {
     const validate = ajv.compile(ActionSchema);
+    console.log("validate", validate);
+
     return validate(payload);
   }
 
@@ -153,8 +157,12 @@ export class OcppHandler {
 
     if (!(await this.validatePayload(authorizeSchema, payload))) {
       console.warn("*** ❌ Bad request****");
-      logger.error(`Request rejected due to invalid schema : ${message}
-      Response : ${messageId} ${JSON.stringify({ status: "Rejected" })}`);
+      logError({
+        action: message[2],
+        messageId: messageId,
+        payload: payload,
+        reason: "Rejected request due to invalid Schema",
+      });
       return this.sendResult(messageId, {
         status: "Rejected",
       });
@@ -192,8 +200,14 @@ export class OcppHandler {
       console.log(`Authorize result for ${payload.idTag}: ${idtaginfo.status}`);
       this.sendResult(messageId, { idtaginfo });
     } catch (err) {
-      logger.error(`Error validating authorize request for idTag: ${message} 
-      response : ${payload.idTag}: ${err.message}\n${err.stack}`);
+      logError({
+        action: message[2],
+        messageId: messageId,
+        payload: payload,
+        reason: "Error validating authorize request for idTag",
+      });
+      // logger.error(`Error validating authorize request for idTag: ${message}
+      // response : ${payload.idTag}: ${err.message}\n${err.stack}`);
       this.sendResult(messageId, { idTagInfo: { status: "Error" } });
     }
   }
@@ -217,9 +231,16 @@ export class OcppHandler {
       );
     } catch (err) {
       console.error(`Error updating heartbeat for ${this.chargePointId}`, err);
-      logger.error(
-        `Error updating heartbeat for ${this.chargePointId}: ${err.message}\n${err.stack}`
-      );
+      // logger.error(
+      //   `Error updating heartbeat for ${this.chargePointId}: ${err.message}\n${err.stack}`
+      // );
+      logError({
+        action: message[2],
+        messageId: messageId,
+        payload: payload,
+        reason: "Error validating authorize request for idTag",
+        stack: err.stack,
+      });
     }
   }
 
@@ -231,7 +252,12 @@ export class OcppHandler {
 
     if (!(await this.validatePayload(StartTransactionSchema, payload))) {
       console.warn(`Validation failed for CP ${this.chargePointId}:`);
-      logger.error(`Request rejected due to invalid payload :  [${message}] `);
+      logError({
+        action: message[2],
+        messageId: messageId,
+        payload: payload,
+        reason: "Rejected request due to invalid Schema",
+      });
 
       return this.sendError(messageId, "ProtocolError", `Invalid payload`);
     }
@@ -304,9 +330,16 @@ export class OcppHandler {
       // --- 7. Handle Error & Send SOAP/JSON Fault (or a non-Accepted CONF) ---
       // In a real system, you would log the error and send a specific OCPP fault response
       // if the database failed or validation failed.
-      logger.error(
-        `Request Rejected by Central System — Policy or authorization failed : ${message}`
-      );
+      // logger.error(
+      //   `Request Rejected by Central System — Policy or authorization failed : ${message}`
+      // );
+      logError({
+        action: message[2],
+        messageId: messageId,
+        payload: payload,
+        reason: "Error handling StartTransaction",
+        stack: error.stack,
+      });
       this.sendError(
         messageId,
         "GenericError",
@@ -320,7 +353,13 @@ export class OcppHandler {
     console.log(`Received MeterValues from ${this.chargePointId}:`, payload);
     if (!(await this.validatePayload(MeterValuesSchema, payload))) {
       console.warn(`Validation failed for CP ${this.chargePointId}:`);
-      logger.error(`Request rejected due to invalid schema ${message}`);
+      logError({
+        action: message[2],
+        messageId: messageId,
+        payload: payload,
+        reason: "Rejected request due to invalid Schema",
+      });
+      // logger.error(`Request rejected due to invalid schema ${message}`);
       return this.sendError(messageId, "ProtocolError", `Invalid payload`);
     }
 
@@ -374,9 +413,16 @@ export class OcppHandler {
         `Internal Error storing MeterValues for CP ${this.chargePointId}:`,
         error
       );
-      logger.error(
-        `Internal Error storing MeterValues for CP ${error.message}`
-      );
+      // logger.error(
+      //   `Internal Error storing MeterValues for CP ${error.message}`
+      // );
+      logError({
+        action: message[2],
+        messageId: messageId,
+        payload: payload,
+        reason: "Internal Error storing MeterValues for CP ",
+        stack: error.stack,
+      });
       // IMPORTANT: The Central System MUST still respond with MeterValues.conf
       // even if its internal database operation fails, provided the message
       // format was valid (as per step 1).
@@ -395,14 +441,12 @@ export class OcppHandler {
 
     if (!(await this.validatePayload(StopTransactionSchema, payload))) {
       console.warn(`Validation failed for CP ${this.chargePointId}:`);
-      logger.error(
-        JSON.stringify({
-          messageId,
-          errorType: "ProtocolError",
-          message: "Invalid payload",
-          time: new Date().toISOString(),
-        })
-      );
+      logError({
+        action: message[2],
+        messageId: messageId,
+        payload: payload,
+        reason: "Rejected request due to invalid Schema",
+      });
 
       return this.sendError(messageId, "ProtocolError", `Invalid payload`);
     }
@@ -471,6 +515,13 @@ export class OcppHandler {
       //  logger.error(
       //  `[${messageId}] GenericError: Internal error while processing StopTransaction.`
       // );
+      logError({
+        action: message[2],
+        messageId: messageId,
+        payload: payload,
+        reason: "Error handling StartTransaction",
+        stack: error.stack,
+      });
       this.sendError(
         messageId,
         "GenericError",
@@ -538,13 +589,19 @@ export class OcppHandler {
 
     if (!result) {
       console.error("Validation Error for StatusNotification:", result);
-      logger.error(
-        `Request rejected due to invalid schema: ${JSON.stringify({
-          messageId,
-          errorType: "TypeConstraintViolation",
-          time: new Date().toISOString(),
-        })}`
-      );
+      // logger.error(
+      //   `Request rejected due to invalid schema: ${JSON.stringify({
+      //     messageId,
+      //     errorType: "TypeConstraintViolation",
+      //     time: new Date().toISOString(),
+      //   })}`
+      // );
+      logError({
+        action: message[2],
+        messageId: messageId,
+        payload: payload,
+        reason: "Rejected request due to invalid Schema",
+      });
 
       // 2. Reject the non-compliant message
       // Send a CALLERROR back to the CP instead of processing.
@@ -595,6 +652,13 @@ export class OcppHandler {
       );
       // Even if the DB update fails, we typically send the confirmation
       // to prevent the CP from retrying, but log the error prominently.
+      logError({
+        action: message[2],
+        messageId: messageId,
+        payload: payload,
+        reason: `❌ DB update failed for StatusNotification from ${this.chargePointId}:`,
+        stack: error.stack,
+      });
       logger.error(`Error updating the request ${message}`);
       this.sendError(messageId, {});
     }
@@ -643,6 +707,14 @@ export class OcppHandler {
       message;
     const reject = this.callPromises.get(messageId);
     if (reject) {
+      logError({
+        // action: message[2],
+        error: errorDescription,
+        messageId: messageId,
+        // payload: payload,
+        reason: errorDescription,
+        stack: errorDetails,
+      });
       logger.error(`OCPP Error: ${errorDescription} (${errorCode}`);
       reject(new Error(`OCPP Error: ${errorDescription} (${errorCode})`));
       this.callPromises.delete(messageId);
@@ -651,7 +723,7 @@ export class OcppHandler {
 
   // Send a "CallResult" response back to the Charge Point
   sendResult(messageId, payload) {
-    console.log("payload=========>>>>>>>", payload);
+    // console.log("payload=========>>>>>>>", payload);
     const response = [3, messageId, payload];
     if (payload.status == "Rejected") {
       logger.error(`Rejected response :${response}`);
@@ -665,6 +737,11 @@ export class OcppHandler {
   sendError(messageId, errorCode, errorDescription) {
     const response = [4, messageId, errorCode, errorDescription, {}];
     logger.error(`CallError: ${response}`);
+    logError({
+      error: errorCode,
+      messageId: messageId,
+      reason: errorDescription,
+    });
     this.ws.send(JSON.stringify(response));
   }
 }
