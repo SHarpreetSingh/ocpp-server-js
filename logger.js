@@ -1,16 +1,14 @@
-// logger.js
 import winston from "winston";
 import fs from "fs";
 
-// Make sure logs folder exists
 const logDir = "logs";
 if (!fs.existsSync(logDir)) {
   fs.mkdirSync(logDir);
 }
 
-// Create logger instance
 const logger = winston.createLogger({
-  level: "info",
+  // 👇 Important: set lowest level you want to capture globally
+  level: "debug",
   format: winston.format.combine(
     winston.format.timestamp(),
     winston.format.printf(
@@ -19,10 +17,29 @@ const logger = winston.createLogger({
     )
   ),
   transports: [
+    // ✅ Info & other normal logs
     new winston.transports.File({
-      filename: `${logDir}/ocpp.log`, // single log file
-      maxsize: 5 * 1024 * 1024, // 5MB per file (then rotates)
-      maxFiles: 5, // keep last 5 files
+      filename: `${logDir}/ocpp.log`,
+      level: "info", // includes info, warn, error
+      maxsize: 5 * 1024 * 1024,
+      maxFiles: 5,
+    }),
+
+    // ⚠️ Error-only logs
+    new winston.transports.File({
+      filename: `${logDir}/error.log`,
+      level: "error", // error only
+      maxsize: 5 * 1024 * 1024,
+      maxFiles: 5,
+    }),
+
+    // 🖥️ Optional console output
+    new winston.transports.Console({
+      level: "debug",
+      format: winston.format.combine(
+        winston.format.colorize(),
+        winston.format.simple()
+      ),
     }),
   ],
 });
