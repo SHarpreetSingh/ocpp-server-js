@@ -16,9 +16,11 @@ try {
   (async function () {
     try {
       await mongoose.connect("mongodb://localhost:27017/ocpp");
-      console.log("MongoDB connected successfully");
+      logger.info("MongoDB connected successfully");
+      console.debug("MongoDB connected successfully");
     } catch (error) {
-      console.log(error);
+     logger.error(`Error connecting to MongoDB: ${error.message}\n${error.stack}`);
+      console.debug(error);
     }
   })();
 
@@ -51,7 +53,7 @@ try {
           socket.on("close", (message) => {
             socket.close();
             // resolve()
-            console.log(`closed connection from ${CpID} `);
+            console.debug(`closed connection from ${CpID} `);
             logger.info(`closed connection from ${CpID} `);
           });
         // })

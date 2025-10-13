@@ -2,8 +2,7 @@
 import chargePoint from "../models/chargePoint.js";
 
 
-export async function createAndUpdateBootnotification(payload, ocppHandler) {
-
+export async function createAndUpdateBootnotification(payload, ocppHandler,messageId,message) {
     const update = {
         vendor: payload.chargePointVendor,
         model: payload.chargePointModel,
@@ -31,9 +30,15 @@ export async function createAndUpdateBootnotification(payload, ocppHandler) {
             options
         );
 
-        console.log(createAndUpdtCP)
+        console.log("createAndUpdtCP",createAndUpdtCP)
         if (!createAndUpdtCP) {
             console.log(`Charge Point ${ocppHandler.chargePointId} or  not found.`);
+            logger.error(`Rejected Request due to missing Charge Point : 
+                ${message}, ${JSON.stringify({
+                status: "Rejected",
+                currentTime: new Date().toISOString(),
+                interval: 0,
+            })}`)
             return ocppHandler.sendError(messageId, {
                 status: "Rejected",
                 currentTime: new Date().toISOString(),
@@ -44,6 +49,11 @@ export async function createAndUpdateBootnotification(payload, ocppHandler) {
         return true
     } catch (error) {
         console.error("Error updating connector status:", error);
+        logger.error(`Request rejectede to error updating connector Status : ${messageId}, ${JSON.stringify({
+            status: "Rejected",
+            currentTime: new Date().toISOString(),
+            interval: 0,
+        })}`)
         return ocppHandler.sendError(messageId, {
             status: "Rejected",
             currentTime: new Date().toISOString(),
@@ -73,12 +83,14 @@ export async function updateConnectorStatus(serialNumber, status, connectorId) {
 
         if (!updatedCP) {
             console.log(`Charge Point ${serialNumber} or Connector ${connectorId} not found.`);
+            logger.error(`Charge Point ${serialNumber} or Connector ${connectorId} not found.`);
             return false
         }
         console.log(`Status updated for Connector ${connectorId} on ${serialNumber} to status: ${status}.`);
         return true
     } catch (error) {
         console.error("Error updating connector status:", error);
+        logger.error(`Error updating connector status: ${error}`);
         return false
     }
 }
