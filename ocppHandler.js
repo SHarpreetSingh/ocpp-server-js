@@ -107,19 +107,11 @@ export class OcppHandler {
     if (!(await this.validatePayload(bootNotificationSchema, payload))) {
       logError({
         action: message[2],
-        messageId: messageId,
-        payload: payload,
+        messageId,
+        payload,
         reason: "FormatViolation",
       });
-      // logger.error(
-      //   `FormatViolation : ${message}
-      //   Response : ${messageId}, ${JSON.stringify({
-      //     status: "Rejected",
-      //     currentTime: new Date().toISOString(),
-      //     interval: 0,
-      //   })}`
-      // );
-      // });
+
       return this.sendError(messageId, {
         status: "Rejected",
         currentTime: new Date().toISOString(),
@@ -158,8 +150,8 @@ export class OcppHandler {
       console.warn("*** ❌ Bad request****");
       logError({
         action: message[2],
-        messageId: messageId,
-        payload: payload,
+        messageId,
+        payload,
         reason: "FormatViolation",
       });
       return this.sendError(messageId, "FormatViolation", "Invalid payload");
@@ -200,13 +192,6 @@ export class OcppHandler {
       console.log(`Authorize result for ${payload.idTag}: ${idtaginfo.status}`);
       return this.sendResult(messageId, { idtaginfo });
     } catch (err) {
-      logError({
-        action: message[2],
-        messageId: messageId,
-        payload: payload,
-        reason: "Error validating authorize request for idTag",
-      });
-
       console.error(
         `Error validating authorize request for idTag=${payload.idTag}`,
         err
@@ -234,13 +219,6 @@ export class OcppHandler {
       return this.sendResult(messageId, { currentTime: now.toISOString() });
     } catch (err) {
       console.error(`Error updating heartbeat for ${this.chargePointId}`, err);
-      logError({
-        action: message[2],
-        messageId: messageId,
-        payload: payload,
-        reason: "Error validating authorize request for idTag",
-        stack: err.stack,
-      });
       return this.sendError(
         messageId,
         "GenericError",
@@ -259,8 +237,8 @@ export class OcppHandler {
       console.warn(`Validation failed for CP ${this.chargePointId}:`);
       logError({
         action: message[2],
-        messageId: messageId,
-        payload: payload,
+        messageId,
+        payload,
         reason: "FormatViolation",
       });
 
@@ -335,16 +313,6 @@ export class OcppHandler {
       // --- 7. Handle Error & Send SOAP/JSON Fault (or a non-Accepted CONF) ---
       // In a real system, you would log the error and send a specific OCPP fault response
       // if the database failed or validation failed.
-      // logger.error(
-      //   `Request Rejected by Central System — Policy or authorization failed : ${message}`
-      // );
-      logError({
-        action: message[2],
-        messageId: messageId,
-        payload: payload,
-        reason: "Error handling StartTransaction",
-        stack: error.stack,
-      });
       this.sendError(
         messageId,
         "GenericError",
@@ -360,11 +328,10 @@ export class OcppHandler {
       console.warn(`Validation failed for CP ${this.chargePointId}:`);
       logError({
         action: message[2],
-        messageId: messageId,
-        payload: payload,
+        messageId,
+        payload,
         reason: "FormatViolation",
       });
-      // logger.error(`Request rejected due to invalid schema ${message}`);
       return this.sendError(messageId, "FormatViolation", `Invalid payload`);
     }
 
@@ -418,16 +385,6 @@ export class OcppHandler {
         `Internal Error storing MeterValues for CP ${this.chargePointId}:`,
         error
       );
-      // logger.error(
-      //   `Internal Error storing MeterValues for CP ${error.message}`
-      // );
-      logError({
-        action: message[2],
-        messageId: messageId,
-        payload: payload,
-        reason: "Internal Error storing MeterValues for CP ",
-        stack: error.stack,
-      });
       // IMPORTANT: The Central System MUST still respond with MeterValues.conf
       // even if its internal database operation fails, provided the message
       // format was valid (as per step 1).
@@ -445,8 +402,8 @@ export class OcppHandler {
       console.warn(`Validation failed for CP ${this.chargePointId}:`);
       logError({
         action: message[2],
-        messageId: messageId,
-        payload: payload,
+        messageId,
+        payload,
         reason: "FormatViolation",
       });
 
@@ -474,11 +431,10 @@ export class OcppHandler {
         console.warn(`No active transaction found ${transactionId}`);
         logError({
           action: message[2],
-          messageId: messageId,
-          payload: payload,
+          messageId,
+          payload,
           reason: "Not Found",
         });
-        //  logger.error(`[${messageId}] Transaction not found or already stopped`);
         return this.sendError(
           messageId,
           "Transaction not found or already stopped"
@@ -518,14 +474,6 @@ export class OcppHandler {
       this.sendResult(messageId, confPayload);
     } catch (error) {
       console.error("Error handling StartTransaction:", error);
-      logError({
-        action: message[2],
-        messageId: messageId,
-        payload: payload,
-        reason: "Error handling StartTransaction",
-        stack: error.stack,
-      });
-
       return this.sendError(
         messageId,
         "GenericError",
@@ -593,17 +541,10 @@ export class OcppHandler {
 
     if (!result) {
       console.error("Validation Error for StatusNotification:", result);
-      // logger.error(
-      //   `Request rejected due to invalid schema: ${JSON.stringify({
-      //     messageId,
-      //     errorType: "TypeConstraintViolation",
-      //     time: new Date().toISOString(),
-      //   })}`
-      // );
       logError({
         action: message[2],
-        messageId: messageId,
-        payload: payload,
+        messageId,
+        payload,
         reason: "FormatViolation",
       });
 
@@ -635,10 +576,6 @@ export class OcppHandler {
 
       // check if errr in db
       if (!result) {
-        //        logger.error(
-        //   `[${messageId}] InternalError: Central System database update failed.`
-        // );
-
         return this.sendError(
           messageId,
           "InternalError",
@@ -656,14 +593,6 @@ export class OcppHandler {
       );
       // Even if the DB update fails, we typically send the confirmation
       // to prevent the CP from retrying, but log the error prominently.
-      logError({
-        action: message[2],
-        messageId: messageId,
-        payload: payload,
-        reason: `❌ DB update failed for StatusNotification from ${this.chargePointId}:`,
-        stack: error.stack,
-      });
-      logger.error(`Error updating the request ${message}`);
       this.sendError(messageId, {});
     }
   }
@@ -712,10 +641,8 @@ export class OcppHandler {
     const reject = this.callPromises.get(messageId);
     if (reject) {
       logError({
-        // action: message[2],
         error: errorDescription,
-        messageId: messageId,
-        // payload: payload,
+        messageId,
         reason: errorDescription,
         stack: errorDetails,
       });
@@ -743,7 +670,7 @@ export class OcppHandler {
     logger.error(`CallError: ${response}`);
     logError({
       error: errorCode,
-      messageId: messageId,
+      messageId,
       reason: errorDescription,
     });
     this.ws.send(JSON.stringify(response));

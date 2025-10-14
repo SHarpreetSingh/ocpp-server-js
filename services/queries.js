@@ -60,12 +60,6 @@ export async function createAndUpdateBootnotification(
     //     currentTime: new Date().toISOString(),
     //     interval: 0,
     // })}`)
-    logError({
-      action: message[2],
-      messageId: messageId,
-      payload: payload,
-      reason: "Error updating connector status",
-    });
     return ocppHandler.sendError(messageId, {
       status: "Rejected",
       currentTime: new Date().toISOString(),
@@ -109,12 +103,6 @@ export async function updateConnectorStatus(serialNumber, status, connectorId) {
   } catch (error) {
     console.error("Error updating connector status:", error);
     // logger.error(`Error updating connector status: ${error}`);
-    logError({
-      action: message[2],
-      messageId: messageId,
-      payload: payload,
-      reason: "Error updating connector status",
-    });
     return false;
   }
 }
