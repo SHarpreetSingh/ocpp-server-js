@@ -28,5 +28,5 @@ export function logError({
     (key) => logEntry[key] == null && delete logEntry[key]
   );
 
-  logger.error(JSON.stringify(logEntry));
+  logger.info(JSON.stringify(logEntry));
 }

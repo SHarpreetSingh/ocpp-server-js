@@ -16,13 +16,11 @@ try {
   (async function () {
     try {
       await mongoose.connect("mongodb://localhost:27017/ocpp");
-      logger.info("MongoDB connected successfully");
-      console.debug("MongoDB connected successfully");
+      console.log("MongoDB connected successfully");
     } catch (error) {
-      logger.error(
+      console.error(
         `Error connecting to MongoDB: ${error.message}\n${error.stack}`
       );
-      console.debug(error);
     }
   })();
 
@@ -113,13 +111,11 @@ try {
       );
       res.status(200).json({ status: "Accepted", connectorId });
     } catch (error) {
-      res
-        .status(500)
-        .json({
-          status: "Rejected",
-          message: "❌ Failed to send ChangeAvailability command.",
-          error: error.message,
-        });
+      res.status(500).json({
+        status: "Rejected",
+        message: "❌ Failed to send ChangeAvailability command.",
+        error: error.message,
+      });
     }
   });
 } catch (err) {
