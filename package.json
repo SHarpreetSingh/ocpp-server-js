@@ -1,19 +1,28 @@
 {
-  "name": "ocpp-server-js",
-  "version": "0.0.0",
-  "private": true,
+  "name": "ocpp_project",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
   "scripts": {
-    "start": "node ./bin/www"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "nodemon index.js"
   },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
   "dependencies": {
-    "cookie-parser": "~1.4.4",
-    "debug": "~2.6.9",
-    "express": "~4.16.1",
-    "http-errors": "~1.6.3",
-    "jade": "~1.11.0",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "body-parser": "^2.2.0",
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0",
+    "mongodb": "^6.20.0",
     "mongoose": "^8.18.1",
-    "morgan": "~1.9.1",
-    "uuid": "^13.0.0",
+    "nodemon": "^3.1.10",
+    "prettier": "^3.6.2",
+    "websocket": "^1.0.35",
+    "winston": "^3.17.0",
     "ws": "^8.18.3"
   }
 }
