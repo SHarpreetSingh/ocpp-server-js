@@ -306,14 +306,22 @@ export class OcppHandler {
       };
 
       // This utility function packages the response and sends it over the WebSocket.
-      this.sendResult(messageId, confPayload);
+      return this.sendResult(messageId, confPayload);
     } catch (error) {
       console.error("Error handling StartTransaction:", error);
 
       // --- 7. Handle Error & Send SOAP/JSON Fault (or a non-Accepted CONF) ---
       // In a real system, you would log the error and send a specific OCPP fault response
       // if the database failed or validation failed.
-      this.sendError(
+
+      logError({
+        action: message[2],
+        messageId: messageId,
+        payload: payload,
+        reason: "Error handling StartTransaction",
+        stack: error.stack,
+      });
+      return this.sendError(
         messageId,
         "GenericError",
         "Rejected by Central System: Policy or authorization failed.",
@@ -562,7 +570,7 @@ export class OcppHandler {
     // Log the event for debugging
     console.log(
       `Received StatusNotification from ${this.chargePointId} ` +
-        `for Connector ${connectorId}: ${status} (Error: ${errorCode || "None"})`
+      `for Connector ${connectorId}: ${status} (Error: ${errorCode || "None"})`
     );
 
     try {
@@ -601,7 +609,7 @@ export class OcppHandler {
     const messageId = "change-availability-" + Date.now();
     const requestPayload = {
       connectorId: parseInt(connectorId), // Ensure it's an integer
-      type: type, // The command type: "Operative" or "Inoperative"
+      type: type, // command type: "Operative" or "Inoperative"
     };
 
     return new Promise(async (resolve, reject) => {
@@ -614,7 +622,6 @@ export class OcppHandler {
       ];
 
       try {
-        // 2. Send the message
         this.ws.send(JSON.stringify(message));
       } catch (error) {
         // 3. Reject if WebSocket send fails immediately (e.g., connection lost)
@@ -626,8 +633,10 @@ export class OcppHandler {
 
   // Handle a "CallResult" message (Response from a Central System initiated call)
   handleCallResult(message) {
-    const [messageType, messageId, payload] = message;
+    const [messageType, messageId, action, payload] = message;
     const resolve = this.callPromises.get(messageId);
+    console.log("handleCallResult,", message)
+
     if (resolve) {
       resolve(payload);
       this.callPromises.delete(messageId);
@@ -674,5 +683,45 @@ export class OcppHandler {
       reason: errorDescription,
     });
     this.ws.send(JSON.stringify(response));
+  }
+
+  /**
+     * Sends a RemoteStartTransaction request to a specific Charge Point and waits for the confirmation.
+     * @param {string} serialNumber - The unique identifier of the target CP.
+     * @param {object} payload - The OCPP payload (idTag, connectorId, chargingProfile).
+     * @returns {Promise<object>} Resolves with the RemoteStartTransaction.conf payload.
+     */
+
+  sendRemoteStart(serialNumber, ocppPayload) {
+    const messageId = "RemoteStartTransaction-" + Date.now();
+    const action = "RemoteStartTransaction";
+
+    // 1. Construct the OCPP-J message array
+    const ocppMessage = [2, messageId, action, ocppPayload];
+
+    return new Promise((resolve, reject) => {
+      // Set up a timeout to handle cases where the CP is slow or unresponsive
+      const timeout = setTimeout(() => {
+        this.callPromises.delete(messageId);
+        reject(new Error(`Timeout: CP ${serialNumber} did not respond to ${action} within 10 seconds.`));
+      }, 10000);
+
+      // 2. Store the Promise resolver/rejecter for later use
+      this.callPromises.set(messageId, (confPayload) => {
+        clearTimeout(timeout);
+        resolve(confPayload); // Resolve the main promise
+      });
+
+      try {
+        // 2. Send the message
+        this.ws.send(JSON.stringify(ocppMessage));
+
+      } catch (error) {
+        clearTimeout(timeout);
+        // 3. Reject if WebSocket send fails immediately (e.g., connection lost)
+        this.callPromises.delete(messageId);
+        reject(new Error(`Failed to send message over WebSocket: ${e.message}`));
+      }
+    });
   }
 }

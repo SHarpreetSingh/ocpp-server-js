@@ -39,10 +39,10 @@ export async function createAndUpdateBootnotification(
       console.log(`Charge Point ${ocppHandler.chargePointId} or  not found.`);
       logger.error(`Rejected Request due to missing Charge Point : 
                 ${message}, ${JSON.stringify({
-                  status: "Rejected",
-                  currentTime: new Date().toISOString(),
-                  interval: 0,
-                })}`);
+        status: "Rejected",
+        currentTime: new Date().toISOString(),
+        interval: 0,
+      })}`);
       return ocppHandler.sendError(messageId, {
         status: "Rejected",
         currentTime: new Date().toISOString(),
@@ -103,6 +103,57 @@ export async function updateConnectorStatus(serialNumber, status, connectorId) {
   } catch (error) {
     console.error("Error updating connector status:", error);
     // logger.error(`Error updating connector status: ${error}`);
+    return false;
+  }
+}
+
+
+/**
+ * Checks the database to confirm if the specified connector on the target 
+ * Charge Point is available for a new remote transaction.
+ * * @param {string} serialNumber - The unique identifier of the Charge Point.
+ * @param {number} connectorId - The ID of the connector to check (e.g., 1).
+ * @returns {Promise<boolean>} True if the connector is available, false otherwise.
+ */
+export async function checkConnectorAvailability(serialNumber, connectorId) {
+  // These are the states from the OCPP specification that indicate readiness
+  // or ability to accept a new transaction request. 'Preparing' is often included 
+  // because a remote start might be sent while the EV is already plugged in 
+  // (Status: Preparing).
+  const ALLOWED_STATUSES = ["Available", "Preparing", "Reserved"];
+
+  const connectorCheckQuery = {
+    // Condition 1: Match the specific Charge Point instance
+    serialNumber: serialNumber,
+
+    // Condition 2: Check conditions within the 'connectors' array using $elemMatch
+    'connectors': {
+      $elemMatch: {
+        // a. Match the specific connector ID
+        connectorId: connectorId,
+
+        // b. Connector must be in a ready or reserved state
+        status: { $in: ALLOWED_STATUSES },
+
+        // c. Must NOT have an active transaction running on it.
+        // Assuming 'currentTransactionId' is null or 0 when free.
+        currentTransactionId: { $in: [0, null] }
+      }
+    }
+  };
+
+  try {
+    // Use select('_id') and limit(1) for maximum performance, as we only need to 
+    // confirm existence, not retrieve the full document.
+    const cpDocument = await chargePoint.findOne(connectorCheckQuery)
+    console.log(cpDocument)
+
+    // If the document is found, it means all conditions were met.
+    return !!cpDocument;
+
+  } catch (error) {
+    console.error("Database error during connector check:", error);
+    // Fail safe: assume not available if database call fails
     return false;
   }
 }

@@ -7,16 +7,37 @@ const server = http.createServer(app);
 import { OcppHandler } from "./ocppHandler.js";
 import logger from "./logger.js";
 import bodyParser from "body-parser";
+import {
+  checkConnectorAvailability
+} from "./services/queries.js";
 
 app.use(bodyParser.json());
 
 const connectedChargePoints = new Map();
 
+const apiLoggerMiddleware = (req, res, next) => {
+  // Determine the client IP address, accounting for proxies
+  const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
+  const logEntry = `[API LOG] - ${new Date().toISOString()}
+  Source IP: ${clientIp}
+  Method: ${req.method}
+  Path: ${req.originalUrl}
+  Body Keys: ${Object.keys(req.body).join(', ') || 'None'}
+--------------------------------------------------`;
+
+  console.log(logEntry);
+  // **Crucial Step:** Call next() to allow the request to proceed to the route handlers.
+  next();
+};
+
+app.use(apiLoggerMiddleware);
+
 try {
   (async function () {
     try {
       await mongoose.connect("mongodb://localhost:27017/ocpp");
-      console.log("MongoDB connected successfully");
+      logger.info("MongoDB connected successfully");
     } catch (error) {
       console.error(
         `Error connecting to MongoDB: ${error.message}\n${error.stack}`
@@ -26,8 +47,6 @@ try {
 
   const wss = new WebSocketServer({
     server,
-    // port: 9290,
-    // path: "/ocpp",
   });
 
   wss.on("connection", async (socket, req) => {
@@ -116,6 +135,65 @@ try {
         message: "❌ Failed to send ChangeAvailability command.",
         error: error.message,
       });
+    }
+  });
+
+
+  app.post('/adminApi/chargepoints/:serialNumber/remotestart', async (req, res) => {
+    const serialNumber = req.params.serialNumber;
+    if (!serialNumber) return res.status(400).json({ error: "serialNumber is required for remote start." });
+
+    const { idTag, connectorId } = req.body;
+
+    // 1. Basic Validation (Check required fields)
+    if (!idTag)
+      return res.status(400).json({ error: "idTag is required for remote start." });
+
+    try {
+      // --- 2. Central System Pre-Checks (Database) ---
+      // You would run the connectorCheckQuery and idTagCheckQuery here first
+      // to avoid sending the command if failure is certain.
+      // const isIdTagActive = await checkIdTagStatus(idTag);
+      // If (!isIdTagActive) return res.status(403).json({ error: "Authorization rejected: ID Tag is inactive or expired." });
+
+      const isConnectorAvailable = await checkConnectorAvailability(serialNumber, connectorId);
+      console.log(isConnectorAvailable)
+
+      if (!isConnectorAvailable)
+        return res.status(409).json({ error: "Connector is already busy or faulted." });
+
+      const ocppPayload = {
+        idTag,
+        connectorId, // Optional, but included if sent by API client
+      };
+
+      // NOTE: 'ocppClient.sendRemoteStart' handles finding the CP's active WebSocket
+      // and sends the [2, messageId, "RemoteStartTransaction", {payload}] message.
+      const handlerInstance = connectedChargePoints.get(serialNumber);
+      const remoteStartConf = await handlerInstance.sendRemoteStart(serialNumber, ocppPayload);
+      console.log("remoteStartConf", remoteStartConf)
+
+      // // --- 4. Handle Confirmation from CP (The RemoteStartTransaction.conf) ---
+      if (remoteStartConf.status !== 'Accepted') {
+        // Command was accepted by the CP. 
+        // The actual transaction status will be reported later via StartTransaction.req.
+        // CP rejected the command (e.g., connector unavailable, invalid request).
+        return res.status(409).json({ // 409 Conflict is often used for this
+          status: 'Rejected',
+          message: 'Charge Point rejected the remote start command.',
+          cpResponse: remoteStartConf.status
+        });
+      }
+
+      return res.status(202).json({
+        status: 'OK',
+        message: 'Remote start command successfully sent and accepted by Charge Point.'
+      });
+
+    } catch (error) {
+      // e.g., CP not connected, or database error
+      console.error(`Error processing remote start for ${serialNumber}:`, error);
+      return res.status(500).json({ error: `Failed to communicate with Charge Point or command timed out.` });
     }
   });
 } catch (err) {
