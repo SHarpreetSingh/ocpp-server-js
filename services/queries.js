@@ -143,7 +143,7 @@ export async function checkConnectorAvailability(serialNumber, connectorId) {
     // Use select('_id') and limit(1) for maximum performance, as we only need to 
     // confirm existence, not retrieve the full document.
     const cpDocument = await chargePoint.findOne(connectorCheckQuery)
-    console.log(cpDocument)
+    // console.log(cpDocument)
 
     // If the document is found, it means all conditions were met.
     return !!cpDocument;
