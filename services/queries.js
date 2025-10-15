@@ -1,5 +1,6 @@
 //services/queries.js
 import chargePoint from "../models/chargePoint.js";
+// import transaction from "../models/transaction.js";
 import { logError } from "../Utilitiy/LoggerHelper.js";
 export async function createAndUpdateBootnotification(
   payload,
@@ -55,11 +56,7 @@ export async function createAndUpdateBootnotification(
     return true;
   } catch (error) {
     console.error("Error updating connector status:", error);
-    // logger.error(`Request rejectede to error updating connector Status : ${messageId}, ${JSON.stringify({
-    //     status: "Rejected",
-    //     currentTime: new Date().toISOString(),
-    //     interval: 0,
-    // })}`)
+
     return ocppHandler.sendError(messageId, {
       status: "Rejected",
       currentTime: new Date().toISOString(),
@@ -155,5 +152,43 @@ export async function checkConnectorAvailability(serialNumber, connectorId) {
     console.error("Database error during connector check:", error);
     // Fail safe: assume not available if database call fails
     return false;
+  }
+
+}
+
+/**
+ * Generic function to find a document in any Mongoose Model 
+ * by a specific numeric ID field (e.g., transactionId, reservationId).
+ *
+ * @param {mongoose.Model} Model - The Mongoose model (e.g., Transaction, Reservation).
+ * @param {string} keyName - The name of the numeric field to query (e.g., 'transactionId').
+ * @param {number} keyValue - The numeric value to match against.
+ * @returns {Promise<mongoose.Document|null>} The found document or null.
+ */
+export async function findDocById(Model, queryFilter) {
+
+  if (!Model || !queryFilter) {
+    console.error('Invalid arguments provided to findDocByNumericId. Check Model, queryFilter');
+    return null;
+  }
+  console.log("queryFilter", queryFilter, Model);
+
+  try {
+    // console.log(`Querying Model '${Model}' forqueryFilter...`);
+
+    const document = await Model.findOne(queryFilter).exec();
+    const { _id, isFinished } = document
+    if (!_id) {
+      console.log(`Document not found: ${_id}`);
+      return null;
+    }
+
+    console.log(`Found document. isFinished: ${isFinished}`);
+    return document;
+
+  } catch (error) {
+    console.error(`Database error during lookup for  ${queryFilter}:`, error.message);
+    // Throwing the error is usually better for async functions in a backend
+    throw new Error(`Failed to query database: ${error.message}`);
   }
 }
