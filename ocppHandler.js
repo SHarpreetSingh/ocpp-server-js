@@ -750,22 +750,6 @@ export class OcppHandler {
         }
         logger.info(`Request from CSMS => ${JSON.stringify(message)}`);
         this.ws.send(JSON.stringify(message));
-
-        // const config = await Configuration.findOneAndUpdate(
-        //   {
-        //     chargePointID: chargePointId,
-        //     key: key,
-        //   },
-        //   { value: value, updatedAt: new Date() },
-        //   {
-        //     upsert: true,
-        //     new: true,
-        //   }
-        // );
-        // console.log(
-        //   "config has been updated in DB with pending status",
-        //   config
-        // );
       } catch (error) {
         this.callPromises.delete(messageId);
         console.error(
@@ -777,15 +761,66 @@ export class OcppHandler {
     });
   }
 
-  // // Handle a "CallResult" message (Response from a Central System initiated call)
-  // handleCallResult(message) {
-  //   const [messageType, messageId, payload] = message;
-  //   const resolve = this.callPromises.get(messageId);
-  //   if (resolve) {
-  //     resolve(payload);
-  //     this.callPromises.delete(messageId);
-  //   }
-  // }
+  async handleGetConfiguration(key) {
+    console.log("get config:", key);
+
+    const messageId = "get-Configuration-" + Date.now();
+    const requestPayload = { key };
+    const action = "GetConfiguration";
+
+    // Construct the OCPP CALL message
+    const message = [2, messageId, action, requestPayload];
+
+    return new Promise(async (resolve, reject) => {
+      // this.callPromises.set(messageId, resolve);
+      const timeout = setTimeout(() => {
+        if (this.callPromises) this.callPromises.delete(messageId);
+        reject(
+          new Error(
+            `Timeout: CP ${chargePointId} did not respond to ${action} within 10 seconds.`
+          )
+        );
+      }, 100000);
+
+      if (!this.callPromises) {
+        clearTimeout(timeout);
+        return reject(
+          new new Error(
+            "Internal error: 'this.callPromises' is not available."
+          )()
+        );
+      }
+      this.callPromises.set(messageId, {
+        resolve,
+        reject,
+        action,
+        timeout,
+        key,
+      });
+      console.log("callPromise");
+
+      try {
+        if (!this.ws && this.ws.readyState !== WebSocket.OPEN) {
+          clearTimeout(timeout);
+          this.callPromises.delete(messageId);
+          reject(
+            new Error(
+              "WebSocket connection is not open. Failed to send message."
+            )
+          );
+        }
+        logger.info(`Request from CSMS => ${JSON.stringify(message)}`);
+        this.ws.send(JSON.stringify(message));
+      } catch (error) {
+        this.callPromises.delete(messageId);
+        console.error(
+          "Failed to send ChangeConfiguration or update DB:",
+          error
+        );
+        reject(error);
+      }
+    });
+  }
 
   // Handle a "CallResult" message (Response from a Central System initiated call)
   async handleCallResult(message) {
@@ -836,6 +871,9 @@ export class OcppHandler {
             console.error("Failed to update configuration in DB:", err);
           }
         }
+        break;
+      case "GetConfiguration":
+        isValid = this.validateGetConfiguration(message, action);
         break;
       case "RemoteStopTransaction":
         isValid = this.validateRemoteStopTransactionConf(message, action);
@@ -898,6 +936,47 @@ export class OcppHandler {
         },
       },
       required: ["status"],
+      additionalProperties: false,
+    };
+
+    const valid = await this.validatePayload(schema, payload);
+    if (!valid) {
+      console.error(`Validation failed for ${action} :`, valid);
+      logError({
+        action,
+        messageId,
+        payload,
+        reason: "FormatViolation",
+      });
+    }
+    return valid;
+  }
+
+  async validateGetConfiguration(message, action) {
+    const [messageType, messageId, payload] = message;
+    console.log("message=======>>>>>>>>>", payload);
+
+    const schema = {
+      type: "object",
+      properties: {
+        configurationKey: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              key: { type: "string" },
+              readonly: { type: "boolean" },
+              value: { type: "string" },
+            },
+            required: ["key", "readonly", "value"],
+            additionalProperties: false,
+          },
+        },
+        unknownKey: {
+          type: "array",
+          items: { type: "string" },
+        },
+      },
       additionalProperties: false,
     };
 

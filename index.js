@@ -163,7 +163,7 @@ try {
 
   app.post("/adminApi/chargers/get-configuration/:cpId", async (req, res) => {
     const chargePointId = req.params.cpId;
-    const { key } = req.body;
+    const key = req.body || "";
 
     console.log("API hit:", req.params, "req.body:", req.body);
 
@@ -174,21 +174,10 @@ try {
         .json({ message: "❌ Charge point not connected." });
     }
 
-    if (!key) {
-      return res.status(400).json({
-        message:
-          '❌ Invalid request body. Both "key" and "value" are required.',
-      });
-    }
-
     try {
-      const result = await handlerInstance.handleChangeConfiguration(
-        chargePointId,
-        key,
-        value
-      );
+      const result = await handlerInstance.handleGetConfiguration(key);
       res.status(200).json({
-        message: "✅ ChangeConfiguration request sent successfully.",
+        message: "✅ GetConfiguration request sent successfully.",
         response: result,
       });
     } catch (error) {
