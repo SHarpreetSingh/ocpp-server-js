@@ -82,7 +82,7 @@ export async function updateConnectorStatus(serialNumber, status, connectorId) {
         new: true,
       }
     );
-    console.log("updatedCP", updatedCP);
+    // console.log("updatedCP", updatedCP);
 
     if (!updatedCP) {
       console.log(
@@ -173,7 +173,6 @@ export async function findDocById(Model, queryFilter) {
   console.log("queryFilter", queryFilter, Model);
 
   try {
-    // console.log(`Querying Model '${Model}' forqueryFilter...`);
 
     const document = await Model.findOne(queryFilter).exec();
     const { _id, isFinished } = document
@@ -187,7 +186,7 @@ export async function findDocById(Model, queryFilter) {
 
   } catch (error) {
     console.error(`Database error during lookup for  ${queryFilter}:`, error.message);
-    // Throwing the error is usually better for async functions in a backend
+    // Throwing the error is usually better for async functions
     throw new Error(`Failed to query database: ${error.message}`);
   }
 }

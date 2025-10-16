@@ -727,7 +727,7 @@ export class OcppHandler {
      */
 
   sendRemoteStart(serialNumber, ocppPayload) {
-    console.log("sendRemoteStart",serialNumber, ocppPayload)
+    console.log("sendRemoteStart", serialNumber, ocppPayload)
     const messageId = "RemoteStartTransaction-" + Date.now();
     const action = "RemoteStartTransaction";
 
@@ -749,6 +749,7 @@ export class OcppHandler {
       try {
         // 2. Send the message
         this.ws.send(JSON.stringify(ocppMessage));
+        // return this.sendResult(messageId, { currentTime: now.toISOString() });
       } catch (error) {
         clearTimeout(timeout);
         // 3. Reject if WebSocket send fails immediately (e.g., connection lost)
@@ -808,6 +809,7 @@ export class OcppHandler {
         }
 
         this.ws.send(JSON.stringify(ocppMessage));
+        logger.info(`-> Response to CP ${CpID}: ${ocppMessage}`);
         console.log(`Sent ${action} request (ID: ${messageId}) to CP ${serialNumber}.`);
       } catch (e) {
         clearTimeout(timeout);

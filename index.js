@@ -70,7 +70,7 @@ try {
     console.log(`CP connected: ${CpID}`);
     logger.info(`CP connected: ${CpID}`);
     socket.on("message", (message) => {
-      console.log(`Message receviced from ${CpID}: ${message}`);
+      // console.log(`Message receviced from ${CpID}: ${message}`);
       logger.info(`<- Request from CP ${CpID}: ${message}`);
     });
 
@@ -142,7 +142,7 @@ try {
 
 
   app.post('/adminApi/chargepoints/:serialNumber/remotestart', async (req, res) => {
-    const serialNumber = req.params.serialNumber;
+    const serialNumber = req.params?.serialNumber;
     if (!serialNumber) return res.status(400).json({ error: "serialNumber is required for remote start." });
 
     const { idTag, connectorId } = req.body;
@@ -224,7 +224,10 @@ try {
 
       if (isFinished) {
         // This prevents the CSMS from sending a command that is likely to be rejected.
-        return res.status(409).json({ error: `Transaction ${csTransactionId} is already ${isFinished} and cannot be remotely stopped.` });
+        return res.status(409).json({
+          error:
+            `Transaction ${csTransactionId} is already ${isFinished} and cannot be remotely stopped.`
+        });
       }
 
       // 3. Find Handler and Send Command
@@ -234,23 +237,23 @@ try {
       }
 
       // Send the RemoteStopTransaction.req and await the .conf response
-      const remoteStopConf = await handlerInstance.sendRemoteStop(serialNumber, ocppPayload);
-      console.log("RemoteStopTransaction.conf received:", remoteStopConf);
+      const { status } = await handlerInstance.sendRemoteStop(serialNumber, ocppPayload);
+      console.log("RemoteStopTransaction.conf received: status", status);
 
       // // --- 4. Handle Confirmation from CP (The RemoteStopTransaction.conf) ---
-      if (remoteStopConf.status !== 'Accepted') {
+      if (status !== 'Accepted') {
         // CP rejected the command (e.g., ID not found, CP error).
         return res.status(409).json({
           status: 'Rejected',
           message: 'Charge Point rejected the remote stop command.',
-          cpResponse: remoteStopConf.status
+          cpResponse: status
         });
       }
 
       // Command accepted by the CP. The actual transaction status change (StopTransaction.req) 
       // will be reported later by the CP.
       return res.status(202).json({
-        status: 'OK',
+        status,
         message: `Remote stop command successfully sent and
          accepted by Charge Point for JSON.stringify(ocppPayload).`
       });
