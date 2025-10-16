@@ -153,7 +153,6 @@ export async function checkConnectorAvailability(serialNumber, connectorId) {
     // Fail safe: assume not available if database call fails
     return false;
   }
-
 }
 
 /**

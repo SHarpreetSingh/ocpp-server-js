@@ -77,7 +77,6 @@ try {
     // Pass the WebSocket and ID to the OCPP handler
     const ocppHandler = new OcppHandler(socket, CpID);
     connectedChargePoints.set(CpID, ocppHandler);
-    // console.log("connectedChargePoints", connectedChargePoints)
 
     socket.on("message", ocppHandler.onMessage.bind(ocppHandler));
 
@@ -173,23 +172,23 @@ try {
       // NOTE: 'ocppClient.sendRemoteStart' handles finding the CP's active WebSocket
       // and sends the [2, messageId, "RemoteStartTransaction", {payload}] message.
       const handlerInstance = connectedChargePoints.get(serialNumber);
-      const remoteStartConf = await handlerInstance.sendRemoteStart(serialNumber, ocppPayload);
-      console.log("remoteStartConf", remoteStartConf)
+      const { status } = await handlerInstance.sendRemoteStart(serialNumber, ocppPayload);
+      // console.log("status", status)
 
       // // --- 4. Handle Confirmation from CP (The RemoteStartTransaction.conf) ---
-      if (remoteStartConf.status !== 'Accepted') {
+      if (status !== 'Accepted') {
         // Command was accepted by the CP. 
         // The actual transaction status will be reported later via StartTransaction.req.
         // CP rejected the command (e.g., connector unavailable, invalid request).
         return res.status(409).json({ // 409 Conflict is often used for this
-          status: 'Rejected',
+          status,
           message: 'Charge Point rejected the remote start command.',
-          cpResponse: remoteStartConf.status
+          cpResponse: status
         });
       }
 
-      return res.status(202).json({
-        status: 'OK',
+      return res.status(200).json({
+        status,
         message: 'Remote start command successfully sent and accepted by Charge Point.'
       });
 

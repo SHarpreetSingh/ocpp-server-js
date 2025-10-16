@@ -727,6 +727,7 @@ export class OcppHandler {
      */
 
   sendRemoteStart(serialNumber, ocppPayload) {
+    console.log("sendRemoteStart",serialNumber, ocppPayload)
     const messageId = "RemoteStartTransaction-" + Date.now();
     const action = "RemoteStartTransaction";
 
