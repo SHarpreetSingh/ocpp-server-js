@@ -43,7 +43,6 @@ export class OcppHandler {
           this.handleCallError(parsedMessage);
           break;
         default:
-          console.error(`Unknown message type: ${messageType}`);
           logger.error(`Unknown message type: ${messageType}`);
           break;
       }
@@ -306,14 +305,22 @@ export class OcppHandler {
       };
 
       // This utility function packages the response and sends it over the WebSocket.
-      this.sendResult(messageId, confPayload);
+      return this.sendResult(messageId, confPayload);
     } catch (error) {
       console.error("Error handling StartTransaction:", error);
 
       // --- 7. Handle Error & Send SOAP/JSON Fault (or a non-Accepted CONF) ---
       // In a real system, you would log the error and send a specific OCPP fault response
       // if the database failed or validation failed.
-      this.sendError(
+
+      logError({
+        action: message[2],
+        messageId: messageId,
+        payload: payload,
+        reason: "Error handling StartTransaction",
+        stack: error.stack,
+      });
+      return this.sendError(
         messageId,
         "GenericError",
         "Rejected by Central System: Policy or authorization failed.",
@@ -562,7 +569,7 @@ export class OcppHandler {
     // Log the event for debugging
     console.log(
       `Received StatusNotification from ${this.chargePointId} ` +
-        `for Connector ${connectorId}: ${status} (Error: ${errorCode || "None"})`
+      `for Connector ${connectorId}: ${status} (Error: ${errorCode || "None"})`
     );
 
     try {
@@ -601,7 +608,7 @@ export class OcppHandler {
     const messageId = "change-availability-" + Date.now();
     const requestPayload = {
       connectorId: parseInt(connectorId), // Ensure it's an integer
-      type: type, // The command type: "Operative" or "Inoperative"
+      type: type, // command type: "Operative" or "Inoperative"
     };
 
     return new Promise(async (resolve, reject) => {
@@ -614,7 +621,6 @@ export class OcppHandler {
       ];
 
       try {
-        // 2. Send the message
         this.ws.send(JSON.stringify(message));
       } catch (error) {
         // 3. Reject if WebSocket send fails immediately (e.g., connection lost)
@@ -626,12 +632,49 @@ export class OcppHandler {
 
   // Handle a "CallResult" message (Response from a Central System initiated call)
   handleCallResult(message) {
-    const [messageType, messageId, payload] = message;
-    const resolve = this.callPromises.get(messageId);
-    if (resolve) {
-      resolve(payload);
-      this.callPromises.delete(messageId);
+    const [type, messageId, payload] = message;
+
+    if (type !== 3 || !payload || typeof payload !== "object") {
+      console.error("Malformed CallResult:", message);
+      return;
     }
+
+    const callData = this.callPromises.get(messageId);
+    if (!callData) {
+      console.warn(`No promise found for messageId ${messageId}`);
+      return;
+    }
+
+    const { resolve, action, timeout } = callData;
+    let isValid = true;
+
+    // Choose validation schema based on the action
+    console.log("action", action)
+    switch (action) {
+      case "ChangeConfiguration":
+        isValid = this.validateChangeConfigurationConf(message);
+        break;
+      case "RemoteStartTransaction":
+        isValid = this.validateRemoteStartTransactionConf(message, action);
+        break;
+      case "RemoteStopTransaction":
+        isValid = this.validateRemoteStopTransactionConf(message, action);
+        break;
+      default:
+        console.warn(`No schema found for action: ${action}`);
+    }
+    // console.warn(`No promise for messageId ${messageId}`);
+
+    // Validate payload (if schema exists)
+    if (!isValid) {
+      console.error(`Validation failed for ${action}`, payload);
+      this.callPromises.delete(messageId);
+      return;
+    }
+
+    clearTimeout(timeout);
+    resolve(payload);
+    this.callPromises.delete(messageId);
   }
 
   // Handle a "CallError" message
@@ -674,5 +717,163 @@ export class OcppHandler {
       reason: errorDescription,
     });
     this.ws.send(JSON.stringify(response));
+  }
+
+  /**
+     * Sends a RemoteStartTransaction request to a specific Charge Point and waits for the confirmation.
+     * @param {string} serialNumber - The unique identifier of the target CP.
+     * @param {object} payload - The OCPP payload (idTag, connectorId, chargingProfile).
+     * @returns {Promise<object>} Resolves with the RemoteStartTransaction.conf payload.
+     */
+
+  sendRemoteStart(serialNumber, ocppPayload) {
+    console.log("sendRemoteStart", serialNumber, ocppPayload)
+    const messageId = "RemoteStartTransaction-" + Date.now();
+    const action = "RemoteStartTransaction";
+
+    // 1. Construct the OCPP-J message array
+    const ocppMessage = [2, messageId, action, ocppPayload];
+
+    return new Promise((resolve, reject) => {
+      // Set up a timeout to handle cases where the CP is slow or unresponsive
+      const timeout = setTimeout(() => {
+        this.callPromises.delete(messageId);
+        reject(new Error(`Timeout: CP ${serialNumber} did not respond to ${action} within 10 seconds.`));
+      }, 10000);
+
+      // 2. Store the Promise resolver/rejecter for later use
+      this.callPromises.set(messageId, {
+        timeout, resolve, reject, action
+      });
+
+      try {
+        // 2. Send the message
+        this.ws.send(JSON.stringify(ocppMessage));
+        // return this.sendResult(messageId, { currentTime: now.toISOString() });
+      } catch (error) {
+        clearTimeout(timeout);
+        // 3. Reject if WebSocket send fails immediately (e.g., connection lost)
+        this.callPromises.delete(messageId);
+        reject(new Error(`Failed to send message over WebSocket: ${e.message}`));
+      }
+    });
+  }
+
+  /**
+    * @param {string} serialNumber - The unique identifier of the Charge Point.
+  * @param {object} ocppPayload - The payload for RemoteStopTransaction.req.
+  * Must contain the 'transactionId' (e.g., { transactionId: 123 }).
+  * @returns {Promise<object>} A Promise that resolves with the RemoteStopTransaction.conf payload
+  * or rejects on timeout or send failure.
+  */
+
+  sendRemoteStop(serialNumber, ocppPayload) {
+    // 1. Define message action and generate a unique message ID
+    const action = "RemoteStopTransaction";
+    const messageId = "RemoteStopTransaction" + "-" + Date.now();
+
+    // ocppPayload must contain the transactionId: { "transactionId": 12345 }
+    // 2. Construct the OCPP-J message array (Call type = 2)
+    const ocppMessage = [2, messageId, action, ocppPayload];
+
+    // NOTE: This assumes 'this.ws' (WebSocket instance) and 'this.callPromises' (Map)
+    // are available in the scope where this function is executed, mimicking your class structure.
+    return new Promise((resolve, reject) => {
+      // Set up a timeout for the Charge Point's response (RemoteStopTransaction.conf)
+      const timeout = setTimeout(() => {
+        if (this.callPromises)
+          this.callPromises.delete(messageId);
+
+        reject(new Error(`Timeout: CP ${serialNumber} did not respond to ${action} within 10 seconds.`));
+      }, 10000); // 10 seconds timeout
+
+      // 3. Store the Promise resolver/rejecter for when the confirmation comes back
+      if (!this.callPromises) {
+        clearTimeout(timeout);
+        return reject(new new Error("Internal error: 'this.callPromises' is not available."));
+      }
+      this.callPromises.set(messageId, {
+        resolve,
+        reject,
+        action,
+        timeout
+      });
+      console.log("callPromises")
+
+      try {
+        // 4. Send the message over the established WebSocket connection
+        if (!this.ws && this.ws.readyState !== WebSocket.OPEN) {
+          clearTimeout(timeout);
+          this.callPromises.delete(messageId);
+          reject(new Error("WebSocket connection is not open. Failed to send message."));
+        }
+
+        this.ws.send(JSON.stringify(ocppMessage));
+        logger.info(`-> Response to CP ${CpID}: ${ocppMessage}`);
+        console.log(`Sent ${action} request (ID: ${messageId}) to CP ${serialNumber}.`);
+      } catch (e) {
+        clearTimeout(timeout);
+        // 5. Reject if WebSocket send fails immediately (e.g., serialization error or connection issue)
+        this.callPromises.delete(messageId);
+        reject(new Error(`Failed to send message over WebSocket: ${e.message}`));
+      }
+    });
+  }
+
+  async validateRemoteStartTransactionConf(message, action) {
+    const [messageType, messageId, payload] = message;
+
+    const schema = {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: ["Accepted", "Rejected"]
+        }
+      },
+      required: ["status"],
+      additionalProperties: false
+    };
+
+    const valid = await this.validatePayload(schema, payload)
+    if (!valid) {
+      console.error(`Validation failed for ${action} :`, valid);
+      logError({
+        action,
+        messageId,
+        payload,
+        reason: "FormatViolation",
+      });
+      return valid
+    }
+  }
+
+  async validateRemoteStopTransactionConf(message, action) {
+    const [messageType, messageId, payload] = message;
+
+    const schema = {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: ["Accepted", "Rejected"]
+        }
+      },
+      required: ["status"],
+      additionalProperties: false
+    };
+
+    const valid = await this.validatePayload(schema, payload)
+    if (!valid) {
+      console.error(`Validation failed for ${action} :`, valid);
+      logError({
+        action,
+        messageId,
+        payload,
+        reason: "FormatViolation",
+      });
+
+      return valid
+    }
   }
 }

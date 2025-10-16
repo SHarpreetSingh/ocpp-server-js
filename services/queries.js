@@ -1,5 +1,6 @@
 //services/queries.js
 import chargePoint from "../models/chargePoint.js";
+// import transaction from "../models/transaction.js";
 import { logError } from "../Utilitiy/LoggerHelper.js";
 export async function createAndUpdateBootnotification(
   payload,
@@ -39,10 +40,10 @@ export async function createAndUpdateBootnotification(
       console.log(`Charge Point ${ocppHandler.chargePointId} or  not found.`);
       logger.error(`Rejected Request due to missing Charge Point : 
                 ${message}, ${JSON.stringify({
-                  status: "Rejected",
-                  currentTime: new Date().toISOString(),
-                  interval: 0,
-                })}`);
+        status: "Rejected",
+        currentTime: new Date().toISOString(),
+        interval: 0,
+      })}`);
       return ocppHandler.sendError(messageId, {
         status: "Rejected",
         currentTime: new Date().toISOString(),
@@ -55,11 +56,7 @@ export async function createAndUpdateBootnotification(
     return true;
   } catch (error) {
     console.error("Error updating connector status:", error);
-    // logger.error(`Request rejectede to error updating connector Status : ${messageId}, ${JSON.stringify({
-    //     status: "Rejected",
-    //     currentTime: new Date().toISOString(),
-    //     interval: 0,
-    // })}`)
+
     return ocppHandler.sendError(messageId, {
       status: "Rejected",
       currentTime: new Date().toISOString(),
@@ -85,7 +82,7 @@ export async function updateConnectorStatus(serialNumber, status, connectorId) {
         new: true,
       }
     );
-    console.log("updatedCP", updatedCP);
+    // console.log("updatedCP", updatedCP);
 
     if (!updatedCP) {
       console.log(
@@ -104,5 +101,92 @@ export async function updateConnectorStatus(serialNumber, status, connectorId) {
     console.error("Error updating connector status:", error);
     // logger.error(`Error updating connector status: ${error}`);
     return false;
+  }
+}
+
+
+/**
+ * Checks the database to confirm if the specified connector on the target 
+ * Charge Point is available for a new remote transaction.
+ * * @param {string} serialNumber - The unique identifier of the Charge Point.
+ * @param {number} connectorId - The ID of the connector to check (e.g., 1).
+ * @returns {Promise<boolean>} True if the connector is available, false otherwise.
+ */
+export async function checkConnectorAvailability(serialNumber, connectorId) {
+  // These are the states from the OCPP specification that indicate readiness
+  // or ability to accept a new transaction request. 'Preparing' is often included 
+  // because a remote start might be sent while the EV is already plugged in 
+  // (Status: Preparing).
+  const ALLOWED_STATUSES = ["Available", "Preparing", "Reserved"];
+
+  const connectorCheckQuery = {
+    // Condition 1: Match the specific Charge Point instance
+    serialNumber: serialNumber,
+
+    // Condition 2: Check conditions within the 'connectors' array using $elemMatch
+    'connectors': {
+      $elemMatch: {
+        // a. Match the specific connector ID
+        connectorId: connectorId,
+
+        // b. Connector must be in a ready or reserved state
+        status: { $in: ALLOWED_STATUSES },
+
+        // c. Must NOT have an active transaction running on it.
+        // Assuming 'currentTransactionId' is null or 0 when free.
+        currentTransactionId: { $in: [0, null] }
+      }
+    }
+  };
+
+  try {
+    // Use select('_id') and limit(1) for maximum performance, as we only need to 
+    // confirm existence, not retrieve the full document.
+    const cpDocument = await chargePoint.findOne(connectorCheckQuery)
+    // console.log(cpDocument)
+
+    // If the document is found, it means all conditions were met.
+    return !!cpDocument;
+
+  } catch (error) {
+    console.error("Database error during connector check:", error);
+    // Fail safe: assume not available if database call fails
+    return false;
+  }
+}
+
+/**
+ * Generic function to find a document in any Mongoose Model 
+ * by a specific numeric ID field (e.g., transactionId, reservationId).
+ *
+ * @param {mongoose.Model} Model - The Mongoose model (e.g., Transaction, Reservation).
+ * @param {string} keyName - The name of the numeric field to query (e.g., 'transactionId').
+ * @param {number} keyValue - The numeric value to match against.
+ * @returns {Promise<mongoose.Document|null>} The found document or null.
+ */
+export async function findDocById(Model, queryFilter) {
+
+  if (!Model || !queryFilter) {
+    console.error('Invalid arguments provided to findDocByNumericId. Check Model, queryFilter');
+    return null;
+  }
+  console.log("queryFilter", queryFilter, Model);
+
+  try {
+
+    const document = await Model.findOne(queryFilter).exec();
+    const { _id, isFinished } = document
+    if (!_id) {
+      console.log(`Document not found: ${_id}`);
+      return null;
+    }
+
+    console.log(`Found document. isFinished: ${isFinished}`);
+    return document;
+
+  } catch (error) {
+    console.error(`Database error during lookup for  ${queryFilter}:`, error.message);
+    // Throwing the error is usually better for async functions
+    throw new Error(`Failed to query database: ${error.message}`);
   }
 }
