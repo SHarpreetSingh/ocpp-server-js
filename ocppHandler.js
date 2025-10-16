@@ -809,7 +809,7 @@ export class OcppHandler {
         }
 
         this.ws.send(JSON.stringify(ocppMessage));
-        logger.info(`-> Response to CP ${CpID}: ${ocppMessage}`);
+        // logger.info(`-> Response to CP ${serialNumber}: ${ocppMessage}`);
         console.log(`Sent ${action} request (ID: ${messageId}) to CP ${serialNumber}.`);
       } catch (e) {
         clearTimeout(timeout);
