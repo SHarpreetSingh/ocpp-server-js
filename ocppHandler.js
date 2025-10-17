@@ -14,6 +14,8 @@ import StartTransactionSchema from "./jsonSchemas/StartTransaction.json" with { 
 import StopTransactionSchema from "./jsonSchemas/StopTransaction.json" with { type: "json" };
 import MeterValuesSchema from "./jsonSchemas/MeterValuesSchema.json" with { type: "json" };
 import { logError } from "./Utilitiy/LoggerHelper.js";
+import Configuration from "./models/configuration.js";
+import path from "path";
 const ajv = new Ajv();
 addFormats(ajv);
 
@@ -621,6 +623,8 @@ export class OcppHandler {
       ];
 
       try {
+        // 2. Send the message
+        logger.info(`Request from CSMS => ${message}`);
         this.ws.send(JSON.stringify(message));
       } catch (error) {
         // 3. Reject if WebSocket send fails immediately (e.g., connection lost)
@@ -630,10 +634,133 @@ export class OcppHandler {
     });
   }
 
-  // Handle a "CallResult" message (Response from a Central System initiated call)
-  handleCallResult(message) {
-    const [type, messageId, payload] = message;
+  async handleChangeConfiguration(chargePointId, key, value) {
+    console.log("Change config:", chargePointId, key, value);
 
+    const messageId = "change-Configuration-" + Date.now();
+    const requestPayload = { chargePointId, key, value };
+    const action = "ChangeConfiguration";
+
+    // Construct the OCPP CALL message
+    const message = [2, messageId, action, requestPayload];
+
+    return new Promise(async (resolve, reject) => {
+      // this.callPromises.set(messageId, resolve);
+      const timeout = setTimeout(() => {
+        if (this.callPromises) this.callPromises.delete(messageId);
+        reject(
+          new Error(
+            `Timeout: CP ${chargePointId} did not respond to ${action} within 10 seconds.`
+          )
+        );
+      }, 100000);
+
+      if (!this.callPromises) {
+        clearTimeout(timeout);
+        return reject(
+          new new Error(
+            "Internal error: 'this.callPromises' is not available."
+          )()
+        );
+      }
+      this.callPromises.set(messageId, {
+        resolve,
+        reject,
+        action,
+        timeout,
+        chargePointId,
+        key,
+        value,
+      });
+      console.log("callPromise");
+
+      try {
+        if (!this.ws && this.ws.readyState !== WebSocket.OPEN) {
+          clearTimeout(timeout);
+          this.callPromises.delete(messageId);
+          reject(
+            new Error(
+              "WebSocket connection is not open. Failed to send message."
+            )
+          );
+        }
+        logger.info(`Request from CSMS => ${JSON.stringify(message)}`);
+        this.ws.send(JSON.stringify(message));
+      } catch (error) {
+        this.callPromises.delete(messageId);
+        console.error(
+          "Failed to send ChangeConfiguration or update DB:",
+          error
+        );
+        reject(error);
+      }
+    });
+  }
+
+  async handleGetConfiguration(key) {
+    console.log("get config:", key);
+
+    const messageId = "get-Configuration-" + Date.now();
+    const requestPayload = { key };
+    const action = "GetConfiguration";
+
+    // Construct the OCPP CALL message
+    const message = [2, messageId, action, requestPayload];
+
+    return new Promise(async (resolve, reject) => {
+      // this.callPromises.set(messageId, resolve);
+      const timeout = setTimeout(() => {
+        if (this.callPromises) this.callPromises.delete(messageId);
+        reject(
+          new Error(
+            `Timeout: CP ${chargePointId} did not respond to ${action} within 10 seconds.`
+          )
+        );
+      }, 100000);
+
+      if (!this.callPromises) {
+        clearTimeout(timeout);
+        return reject(
+          new new Error(
+            "Internal error: 'this.callPromises' is not available."
+          )()
+        );
+      }
+      this.callPromises.set(messageId, {
+        resolve,
+        reject,
+        action,
+        timeout,
+        key,
+      });
+      console.log("callPromise");
+
+      try {
+        if (!this.ws && this.ws.readyState !== WebSocket.OPEN) {
+          clearTimeout(timeout);
+          this.callPromises.delete(messageId);
+          reject(
+            new Error(
+              "WebSocket connection is not open. Failed to send message."
+            )
+          );
+        }
+        logger.info(`Request from CSMS => ${JSON.stringify(message)}`);
+        this.ws.send(JSON.stringify(message));
+      } catch (error) {
+        this.callPromises.delete(messageId);
+        console.error(
+          "Failed to send ChangeConfiguration or update DB:",
+          error
+        );
+        reject(error);
+      }
+    });
+  }
+
+  // Handle a "CallResult" message (Response from a Central System initiated call)
+  async handleCallResult(message) {
+    const [type, messageId, payload] = message;
     if (type !== 3 || !payload || typeof payload !== "object") {
       console.error("Malformed CallResult:", message);
       return;
@@ -645,21 +772,54 @@ export class OcppHandler {
       return;
     }
 
-    const { resolve, action, timeout } = callData;
+    const { resolve, action, timeout, chargePointId, key, value } = callData;
     let isValid = true;
 
     // Choose validation schema based on the action
-    console.log("action", action)
+    console.log("action", action);
     switch (action) {
       case "ChangeConfiguration":
-        isValid = this.validateChangeConfigurationConf(message);
+        isValid = await this.validateChangeConfiguration(message);
+        console.log("isvalid", isValid);
+        if (isValid) {
+          // Update DB here
+          try {
+            if (payload.status == "Accepted") {
+              await chargePoint.findOneAndUpdate(
+                { serialNumber: chargePointId },
+                { heartbeatInterval: value }
+                // { new: true }
+              );
+              await Configuration.findOneAndUpdate(
+                { chargePointID: chargePointId, key: key },
+                {
+                  value: value,
+                  status: payload.status,
+                  updatedAt: new Date(),
+                },
+                { upsert: true, new: true }
+              );
+              console.log(
+                `ChargePoint and configuration table ${chargePointId} updated: ${key} = ${value}`
+              );
+            }
+          } catch (err) {
+            console.error("Failed to update configuration in DB:", err);
+          }
+        }
         break;
-      case "RemoteStartTransaction":
-        isValid = this.validateRemoteStartTransactionConf(message, action);
+      case "GetConfiguration":
+        isValid = this.validateGetConfiguration(message, action);
         break;
+
       case "RemoteStopTransaction":
         isValid = this.validateRemoteStopTransactionConf(message, action);
         break;
+
+      case "RemoteStartTransaction":
+        isValid = this.validateRemoteStartTransactionConf(message, action);
+        break;
+
       default:
         console.warn(`No schema found for action: ${action}`);
     }
@@ -671,8 +831,6 @@ export class OcppHandler {
       this.callPromises.delete(messageId);
       return;
     }
-
-    clearTimeout(timeout);
     resolve(payload);
     this.callPromises.delete(messageId);
   }
@@ -725,7 +883,6 @@ export class OcppHandler {
      * @param {object} payload - The OCPP payload (idTag, connectorId, chargingProfile).
      * @returns {Promise<object>} Resolves with the RemoteStartTransaction.conf payload.
      */
-
   sendRemoteStart(serialNumber, ocppPayload) {
     console.log("sendRemoteStart", serialNumber, ocppPayload)
     const messageId = "RemoteStartTransaction-" + Date.now();
@@ -856,14 +1013,14 @@ export class OcppHandler {
       properties: {
         status: {
           type: "string",
-          enum: ["Accepted", "Rejected"]
-        }
+          enum: ["Accepted", "Rejected"],
+        },
       },
       required: ["status"],
-      additionalProperties: false
+      additionalProperties: false,
     };
 
-    const valid = await this.validatePayload(schema, payload)
+    const valid = await this.validatePayload(schema, payload);
     if (!valid) {
       console.error(`Validation failed for ${action} :`, valid);
       logError({
@@ -873,7 +1030,77 @@ export class OcppHandler {
         reason: "FormatViolation",
       });
 
-      return valid
+      return valid;
     }
+  }
+
+  async validateChangeConfiguration(message, action) {
+    const [messageType, messageId, payload] = message;
+    console.log("message=======>>>>>>>>>", payload);
+
+    const schema = {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: ["Accepted", "Rejected"],
+        },
+      },
+      required: ["status"],
+      additionalProperties: false,
+    };
+
+    const valid = await this.validatePayload(schema, payload);
+    if (!valid) {
+      console.error(`Validation failed for ${action} :`, valid);
+      logError({
+        action,
+        messageId,
+        payload,
+        reason: "FormatViolation",
+      });
+    }
+    return valid;
+  }
+
+  async validateGetConfiguration(message, action) {
+    const [messageType, messageId, payload] = message;
+    console.log("message=======>>>>>>>>>", payload);
+
+    const schema = {
+      type: "object",
+      properties: {
+        configurationKey: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              key: { type: "string" },
+              readonly: { type: "boolean" },
+              value: { type: "string" },
+            },
+            required: ["key", "readonly", "value"],
+            additionalProperties: false,
+          },
+        },
+        unknownKey: {
+          type: "array",
+          items: { type: "string" },
+        },
+      },
+      additionalProperties: false,
+    };
+
+    const valid = await this.validatePayload(schema, payload);
+    if (!valid) {
+      console.error(`Validation failed for ${action} :`, valid);
+      logError({
+        action,
+        messageId,
+        payload,
+        reason: "FormatViolation",
+      });
+    }
+    return valid;
   }
 }
