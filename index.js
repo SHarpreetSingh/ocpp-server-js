@@ -77,6 +77,7 @@ try {
     // Pass the WebSocket and ID to the OCPP handler
     const ocppHandler = new OcppHandler(socket, CpID);
     connectedChargePoints.set(CpID, ocppHandler);
+    // console.log("connectedChargePoints", connectedChargePoints);
 
     socket.on("message", ocppHandler.onMessage.bind(ocppHandler));
 
@@ -94,7 +95,7 @@ try {
 
   const PORT = 3000;
   server.listen(PORT, () => {
-    console.log(`🚀 HTTP API:   http://localhost:${PORT}/api/test`);
+    console.log(`🚀 HTTP API:   http://localhost:${PORT}`);
     console.log(`🚀 WebSocket: ws://localhost:${PORT}`);
   });
 
@@ -105,7 +106,7 @@ try {
     console.log("hit api", req.params, "req.body", req.body);
 
     const handlerInstance = connectedChargePoints.get(serialNumber);
-    // console.log("handlerInstance", handlerInstance);
+    console.log("handlerInstance", handlerInstance);
 
     if (
       !type ||
@@ -139,7 +140,6 @@ try {
       });
     }
   });
-
 
   app.post('/adminApi/chargepoints/:serialNumber/remotestart', async (req, res) => {
     const serialNumber = req.params?.serialNumber;
@@ -262,6 +262,74 @@ try {
       // Catch exceptions like command timeout, network failure, or unexpected DB errors.
       console.error(`Error processing remote stop for ${serialNumber} (ID):`, error);
       return res.status(500).json({ error: `Failed to communicate with Charge Point or command timed out.` });
+    }
+  });
+
+  app.post(
+    "/adminApi/chargers/change-configuration/:cpId",
+    async (req, res) => {
+      const chargePointId = req.params.cpId;
+      const { key, value } = req.body;
+
+      console.log("API hit:", req.params, "req.body:", req.body);
+
+      const handlerInstance = connectedChargePoints.get(chargePointId);
+      if (!handlerInstance) {
+        return res
+          .status(404)
+          .json({ message: "❌ Charge point not connected." });
+      }
+
+      if (!key || !value) {
+        return res.status(400).json({
+          message:
+            '❌ Invalid request body. Both "key" and "value" are required.',
+        });
+      }
+
+      try {
+        const result = await handlerInstance.handleChangeConfiguration(
+          chargePointId,
+          key,
+          value
+        );
+        res.status(200).json({
+          message: "✅ ChangeConfiguration request sent successfully.",
+          response: result,
+        });
+      } catch (error) {
+        res.status(500).json({
+          message: "❌ Failed to send ChangeConfiguration request.",
+          error: error.message,
+        });
+      }
+    }
+  );
+
+  app.post("/adminApi/chargers/get-configuration/:cpId", async (req, res) => {
+    const chargePointId = req.params.cpId;
+    const key = req.body || "";
+
+    console.log("API hit:", req.params, "req.body:", req.body);
+
+    const handlerInstance = connectedChargePoints.get(chargePointId);
+    if (!handlerInstance) {
+      return res
+        .status(404)
+        .json({ message: "❌ Charge point not connected." });
+    }
+
+    try {
+      const result = await handlerInstance.handleGetConfiguration(key);
+      res.status(200).json({
+        message: "✅ GetConfiguration request sent successfully.",
+        response: result,
+      });
+    } catch (error) {
+      res.status(500).json({
+        message: "❌ Failed to send ChangeConfiguration request.",
+        error: error.message,
+      });
     }
   });
 
