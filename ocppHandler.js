@@ -2,20 +2,18 @@
 import Ajv from "ajv";
 import addFormats from "ajv-formats";
 import chargePoint from "./models/chargePoint.js";
-
 import logger from "./logger.js";
 import idTag from "./models/IdTag.js";
 import {
   createAndUpdateBootnotification,
   updateConnectorStatus,
+  changeConfigUpdate,
 } from "./services/queries.js";
 import TransactionModel from "./models/transaction.js";
 import StartTransactionSchema from "./jsonSchemas/StartTransaction.json" with { type: "json" };
 import StopTransactionSchema from "./jsonSchemas/StopTransaction.json" with { type: "json" };
 import MeterValuesSchema from "./jsonSchemas/MeterValuesSchema.json" with { type: "json" };
 import { logError } from "./Utilitiy/LoggerHelper.js";
-import Configuration from "./models/configuration.js";
-import path from "path";
 const ajv = new Ajv();
 addFormats(ajv);
 
@@ -36,9 +34,11 @@ export class OcppHandler {
 
       switch (messageType) {
         case 2: // Call
+          logger.info(`CP -> CSMS : ${message}`);
           this.handleCall(parsedMessage);
           break;
         case 3: // CallResult
+          logger.info(`CP -> CSMS : ${message}`);
           this.handleCallResult(parsedMessage);
           break;
         case 4: // CallError
@@ -136,6 +136,17 @@ export class OcppHandler {
     return validate(payload);
   }
 
+  /**
+   * Handles the Authorize request from a Charge Point and responds with authorization status.
+   *
+   * @async
+   * @param {string} messageId - The unique identifier of the incoming OCPP message.
+   * @param {object} payload - The Authorize.req payload containing the `idTag` to be validated.
+   * @param {Array} message - The full OCPP message array in the format [messageTypeId, messageId, payload].
+   * @returns {Promise<void>} A Promise that resolves after sending the Authorize.conf response or an error message.
+   *
+   **/
+
   async handleAuthorize(messageId, payload, message) {
     console.log(`Received Authorize from ${this.chargePointId}:`, payload);
 
@@ -201,6 +212,17 @@ export class OcppHandler {
     }
   }
 
+  /**
+   * Handles the Heartbeat request from a Charge Point and responds with the current time.
+   *
+   * @async
+   * @param {string} messageId - The unique identifier of the incoming OCPP message.
+   * @param {Array} message - The OCPP Heartbeat message array in the format [messageTypeId, messageId, payload].
+   * @returns {Promise<void>} A Promise that resolves after updating the Charge Point record
+   * and sending the Heartbeat confirmation (Heartbeat.conf) response.
+   *
+   */
+
   async handleHeartbeat(messageId, message) {
     const now = new Date();
     console.log(
@@ -228,6 +250,15 @@ export class OcppHandler {
     }
   }
 
+  /**
+   * Handles the StartTransaction request from a Charge Point and initiates a new charging session.
+   *
+   * @async
+   * @param {string} messageId - The unique identifier of the incoming OCPP message.
+   * @param {object} payload - The StartTransaction.req payload containing connector and transaction details.
+   * @param {Array} message - The full OCPP message array in the format [messageTypeId, messageId, payload].
+   * @returns {Promise<void>} A Promise that resolves after creating the transaction record and sending the StartTransaction.conf response.
+   **/
   async handleStartTransaction(messageId, payload, message) {
     console.log(
       `Received StartTransaction from ${this.chargePointId}:`,
@@ -331,6 +362,15 @@ export class OcppHandler {
     }
   }
 
+  /**
+   * Handles the MeterValues request from a Charge Point and initiates a new charging session.
+   *
+   * @async
+   * @param {string} messageId - The unique identifier of the incoming OCPP message.
+   * @param {object} payload - The StartTransaction.req payload containing connector and transaction details.
+   * @param {Array} message - The full OCPP message array in the format [messageTypeId, messageId, payload].
+   * @returns {Promise<void>} A Promise that resolves after creating the transaction record and sending the StartTransaction.conf response.
+   **/
   async handleMeterValues(messageId, payload, message) {
     console.log(`Received MeterValues from ${this.chargePointId}:`, payload);
     if (!(await this.validatePayload(MeterValuesSchema, payload))) {
@@ -571,7 +611,7 @@ export class OcppHandler {
     // Log the event for debugging
     console.log(
       `Received StatusNotification from ${this.chargePointId} ` +
-      `for Connector ${connectorId}: ${status} (Error: ${errorCode || "None"})`
+        `for Connector ${connectorId}: ${status} (Error: ${errorCode || "None"})`
     );
 
     try {
@@ -624,7 +664,7 @@ export class OcppHandler {
 
       try {
         // 2. Send the message
-        logger.info(`Request from CSMS => ${message}`);
+        logger.info(`CSMS -> CP ${message}`);
         this.ws.send(JSON.stringify(message));
       } catch (error) {
         // 3. Reject if WebSocket send fails immediately (e.g., connection lost)
@@ -684,7 +724,7 @@ export class OcppHandler {
             )
           );
         }
-        logger.info(`Request from CSMS => ${JSON.stringify(message)}`);
+        logger.info(`CSMS -> CP : ${JSON.stringify(message)}`);
         this.ws.send(JSON.stringify(message));
       } catch (error) {
         this.callPromises.delete(messageId);
@@ -745,7 +785,7 @@ export class OcppHandler {
             )
           );
         }
-        logger.info(`Request from CSMS => ${JSON.stringify(message)}`);
+        logger.info(`CSMS -> CP : ${JSON.stringify(message)}`);
         this.ws.send(JSON.stringify(message));
       } catch (error) {
         this.callPromises.delete(messageId);
@@ -780,33 +820,8 @@ export class OcppHandler {
     switch (action) {
       case "ChangeConfiguration":
         isValid = await this.validateChangeConfiguration(message);
-        console.log("isvalid", isValid);
-        if (isValid) {
-          // Update DB here
-          try {
-            if (payload.status == "Accepted") {
-              await chargePoint.findOneAndUpdate(
-                { serialNumber: chargePointId },
-                { heartbeatInterval: value }
-                // { new: true }
-              );
-              await Configuration.findOneAndUpdate(
-                { chargePointID: chargePointId, key: key },
-                {
-                  value: value,
-                  status: payload.status,
-                  updatedAt: new Date(),
-                },
-                { upsert: true, new: true }
-              );
-              console.log(
-                `ChargePoint and configuration table ${chargePointId} updated: ${key} = ${value}`
-              );
-            }
-          } catch (err) {
-            console.error("Failed to update configuration in DB:", err);
-          }
-        }
+        await changeConfigUpdate(isValid, payload, chargePointId, value, key);
+        // console.log("isvalid", isValid);
         break;
       case "GetConfiguration":
         isValid = this.validateGetConfiguration(message, action);
@@ -860,7 +875,7 @@ export class OcppHandler {
     if (payload.status == "Rejected") {
       logger.error(`Rejected response :${response}`);
     }
-    logger.info(`-> Response to CP: ${JSON.stringify(response)}`);
+    logger.info(`CSMS -> CP : ${JSON.stringify(response)}`);
     // console.info("sendResult", response);
     this.ws.send(JSON.stringify(response));
   }
@@ -878,51 +893,61 @@ export class OcppHandler {
   }
 
   /**
-     * Sends a RemoteStartTransaction request to a specific Charge Point and waits for the confirmation.
-     * @param {string} serialNumber - The unique identifier of the target CP.
-     * @param {object} payload - The OCPP payload (idTag, connectorId, chargingProfile).
-     * @returns {Promise<object>} Resolves with the RemoteStartTransaction.conf payload.
-     */
+   * Sends a RemoteStartTransaction request to a specific Charge Point and waits for the confirmation.
+   * @param {string} serialNumber - The unique identifier of the target CP.
+   * @param {object} payload - The OCPP payload (idTag, connectorId, chargingProfile).
+   * @returns {Promise<object>} Resolves updatedCPwith the RemoteStartTransaction.conf payload.
+   */
   sendRemoteStart(serialNumber, ocppPayload) {
-    console.log("sendRemoteStart", serialNumber, ocppPayload)
+    console.log("sendRemoteStart=>>", serialNumber, ocppPayload);
     const messageId = "RemoteStartTransaction-" + Date.now();
     const action = "RemoteStartTransaction";
 
     // 1. Construct the OCPP-J message array
-    const ocppMessage = [2, messageId, action, ocppPayload];
+    const ocppMessage1 = [2, messageId, action, ocppPayload];
 
     return new Promise((resolve, reject) => {
       // Set up a timeout to handle cases where the CP is slow or unresponsive
       const timeout = setTimeout(() => {
         this.callPromises.delete(messageId);
-        reject(new Error(`Timeout: CP ${serialNumber} did not respond to ${action} within 10 seconds.`));
+        reject(
+          new Error(
+            `Timeout: CP ${serialNumber} did not respond to ${action} within 10 seconds.`
+          )
+        );
       }, 10000);
 
       // 2. Store the Promise resolver/rejecter for later use
       this.callPromises.set(messageId, {
-        timeout, resolve, reject, action
+        timeout,
+        resolve,
+        reject,
+        action,
       });
 
       try {
         // 2. Send the message
-        this.ws.send(JSON.stringify(ocppMessage));
+        logger.info(`CSMS -> CP : ${JSON.stringify(ocppMessage1)}`);
+        this.ws.send(JSON.stringify(ocppMessage1));
         // return this.sendResult(messageId, { currentTime: now.toISOString() });
       } catch (error) {
         clearTimeout(timeout);
         // 3. Reject if WebSocket send fails immediately (e.g., connection lost)
         this.callPromises.delete(messageId);
-        reject(new Error(`Failed to send message over WebSocket: ${e.message}`));
+        reject(
+          new Error(`Failed to send message over WebSocket: ${error.message}`)
+        );
       }
     });
   }
 
   /**
-    * @param {string} serialNumber - The unique identifier of the Charge Point.
-  * @param {object} ocppPayload - The payload for RemoteStopTransaction.req.
-  * Must contain the 'transactionId' (e.g., { transactionId: 123 }).
-  * @returns {Promise<object>} A Promise that resolves with the RemoteStopTransaction.conf payload
-  * or rejects on timeout or send failure.
-  */
+   * @param {string} serialNumber - The unique identifier of the Charge Point.
+   * @param {object} ocppPayload - The payload for RemoteStopTransaction.req.
+   * Must contain the 'transactionId' (e.g., { transactionId: 123 }).
+   * @returns {Promise<object>} A Promise that resolves with the RemoteStopTransaction.conf payload
+   * or rejects on timeout or send failure.
+   */
 
   sendRemoteStop(serialNumber, ocppPayload) {
     // 1. Define message action and generate a unique message ID
@@ -938,41 +963,55 @@ export class OcppHandler {
     return new Promise((resolve, reject) => {
       // Set up a timeout for the Charge Point's response (RemoteStopTransaction.conf)
       const timeout = setTimeout(() => {
-        if (this.callPromises)
-          this.callPromises.delete(messageId);
+        if (this.callPromises) this.callPromises.delete(messageId);
 
-        reject(new Error(`Timeout: CP ${serialNumber} did not respond to ${action} within 10 seconds.`));
+        reject(
+          new Error(
+            `Timeout: CP ${serialNumber} did not respond to ${action} within 10 seconds.`
+          )
+        );
       }, 10000); // 10 seconds timeout
 
       // 3. Store the Promise resolver/rejecter for when the confirmation comes back
       if (!this.callPromises) {
         clearTimeout(timeout);
-        return reject(new new Error("Internal error: 'this.callPromises' is not available."));
+        return reject(
+          new new Error(
+            "Internal error: 'this.callPromises' is not available."
+          )()
+        );
       }
       this.callPromises.set(messageId, {
         resolve,
         reject,
         action,
-        timeout
+        timeout,
       });
-      console.log("callPromises")
+      console.log("callPromises");
 
       try {
         // 4. Send the message over the established WebSocket connection
         if (!this.ws && this.ws.readyState !== WebSocket.OPEN) {
           clearTimeout(timeout);
           this.callPromises.delete(messageId);
-          reject(new Error("WebSocket connection is not open. Failed to send message."));
+          reject(
+            new Error(
+              "WebSocket connection is not open. Failed to send message."
+            )
+          );
         }
-
+        logger.info(`CSMS -> CP : ${JSON.stringify(ocppMessage)}`);
         this.ws.send(JSON.stringify(ocppMessage));
-        // logger.info(`-> Response to CP ${serialNumber}: ${ocppMessage}`);
-        console.log(`Sent ${action} request (ID: ${messageId}) to CP ${serialNumber}.`);
+        console.log(
+          `Sent ${action} request (ID: ${messageId}) to CP ${serialNumber}.`
+        );
       } catch (e) {
         clearTimeout(timeout);
         // 5. Reject if WebSocket send fails immediately (e.g., serialization error or connection issue)
         this.callPromises.delete(messageId);
-        reject(new Error(`Failed to send message over WebSocket: ${e.message}`));
+        reject(
+          new Error(`Failed to send message over WebSocket: ${e.message}`)
+        );
       }
     });
   }
@@ -985,14 +1024,14 @@ export class OcppHandler {
       properties: {
         status: {
           type: "string",
-          enum: ["Accepted", "Rejected"]
-        }
+          enum: ["Accepted", "Rejected"],
+        },
       },
       required: ["status"],
-      additionalProperties: false
+      additionalProperties: false,
     };
 
-    const valid = await this.validatePayload(schema, payload)
+    const valid = await this.validatePayload(schema, payload);
     if (!valid) {
       console.error(`Validation failed for ${action} :`, valid);
       logError({
@@ -1001,7 +1040,7 @@ export class OcppHandler {
         payload,
         reason: "FormatViolation",
       });
-      return valid
+      return valid;
     }
   }
 
@@ -1034,6 +1073,17 @@ export class OcppHandler {
     }
   }
 
+  /**
+   * Validates the ChangeConfiguration confirmation payload received from the Charge Point.
+   *
+   * @async
+   * @param {Array} message - The OCPP message array in the format [messageTypeId, messageId, payload].
+   * @param {string} action - The OCPP action name, e.g., "ChangeConfiguration".
+   * @returns {Promise<boolean>} A Promise that resolves to `true` if the payload is valid,
+   * otherwise `false` if the validation fails.
+   *
+   */
+
   async validateChangeConfiguration(message, action) {
     const [messageType, messageId, payload] = message;
     console.log("message=======>>>>>>>>>", payload);
@@ -1062,6 +1112,17 @@ export class OcppHandler {
     }
     return valid;
   }
+
+  /**
+   * Validates the GetConfiguration confirmation payload received from the Charge Point.
+   *
+   * @async
+   * @param {Array} message - The OCPP message array in the format [messageTypeId, messageId, payload].
+   * @param {string} action - The OCPP action name, e.g., "GetConfiguration".
+   * @returns {Promise<boolean>} A Promise that resolves to `true` if the payload is valid,
+   * otherwise `false` if the validation fails.
+   *
+   */
 
   async validateGetConfiguration(message, action) {
     const [messageType, messageId, payload] = message;

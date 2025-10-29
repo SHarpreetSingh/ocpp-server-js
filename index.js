@@ -7,12 +7,8 @@ const server = http.createServer(app);
 import { OcppHandler } from "./ocppHandler.js";
 import logger from "./logger.js";
 import bodyParser from "body-parser";
-import {
-  checkConnectorAvailability,
-  findDocById
-} from "./services/queries.js";
+import { checkConnectorAvailability, findDocById } from "./services/queries.js";
 import transaction from "./models/transaction.js";
-
 
 app.use(bodyParser.json());
 
@@ -20,13 +16,13 @@ const connectedChargePoints = new Map();
 
 const apiLoggerMiddleware = (req, res, next) => {
   // Determine the client IP address, accounting for proxies
-  const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  const clientIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
 
   const logEntry = `[API LOG] - ${new Date().toISOString()}
   Source IP: ${clientIp}
   Method: ${req.method}
   Path: ${req.originalUrl}
-  Body Keys: ${Object.keys(req.body).join(', ') || 'None'}
+  Body Keys: ${Object.keys(req.body).join(", ") || "None"}
 --------------------------------------------------`;
 
   console.log(logEntry);
@@ -70,8 +66,8 @@ try {
     console.log(`CP connected: ${CpID}`);
     logger.info(`CP connected: ${CpID}`);
     socket.on("message", (message) => {
-      // console.log(`Message receviced from ${CpID}: ${message}`);
-      logger.info(`<- Request from CP ${CpID}: ${message}`);
+      console.log(`Message receviced from ${CpID}: ${message}`);
+      // logger.info(`<- Request from CP ${CpID}: ${message}`);
     });
 
     // Pass the WebSocket and ID to the OCPP handler
@@ -99,57 +95,65 @@ try {
     console.log(`🚀 WebSocket: ws://localhost:${PORT}`);
   });
 
-  app.post("/adminApi/chargers/change-availability/:cpId", async (req, res) => {
-    const serialNumber = req.params.cpId;
+  app.post(
+    "/adminApi/chargers/:cpId/change-availability/",
+    async (req, res) => {
+      const serialNumber = req.params.cpId;
 
-    const { type, connectorId } = req.body;
-    console.log("hit api", req.params, "req.body", req.body);
+      const { type, connectorId } = req.body;
+      console.log("hit api", req.params, "req.body", req.body);
 
-    const handlerInstance = connectedChargePoints.get(serialNumber);
-    console.log("handlerInstance", handlerInstance);
+      const handlerInstance = connectedChargePoints.get(serialNumber);
+      console.log("handlerInstance", handlerInstance);
 
-    if (
-      !type ||
-      !["Operative", "Inoperative"].includes(type) ||
-      connectorId === undefined
-    ) {
-      return res.status(400).json({
-        message:
-          '❌ Invalid request body. "status" must be "Operative" or "Inoperative", and "connectorId" is required.',
-      });
+      if (
+        !type ||
+        !["Operative", "Inoperative"].includes(type) ||
+        connectorId === undefined
+      ) {
+        return res.status(400).json({
+          message:
+            '❌ Invalid request body. "status" must be "Operative" or "Inoperative", and "connectorId" is required.',
+        });
+      }
+
+      if (!handlerInstance) {
+        return res
+          .status(404)
+          .json({ message: "❌ Charge point not found or not connected." });
+      }
+
+      try {
+        const result = await handlerInstance.changeAvailability(
+          serialNumber,
+          type,
+          connectorId
+        );
+        res.status(200).json({ status: "Accepted", connectorId });
+      } catch (error) {
+        res.status(500).json({
+          status: "Rejected",
+          message: "❌ Failed to send ChangeAvailability command.",
+          error: error.message,
+        });
+      }
     }
+  );
 
-    if (!handlerInstance) {
+  app.post("/adminApi/chargers/:cpId/remotestart", async (req, res) => {
+    const serialNumber = req.params?.cpId;
+    if (!serialNumber)
       return res
-        .status(404)
-        .json({ message: "❌ Charge point not found or not connected." });
-    }
-
-    try {
-      const result = await handlerInstance.changeAvailability(
-        serialNumber,
-        type,
-        connectorId
-      );
-      res.status(200).json({ status: "Accepted", connectorId });
-    } catch (error) {
-      res.status(500).json({
-        status: "Rejected",
-        message: "❌ Failed to send ChangeAvailability command.",
-        error: error.message,
-      });
-    }
-  });
-
-  app.post('/adminApi/chargepoints/:serialNumber/remotestart', async (req, res) => {
-    const serialNumber = req.params?.serialNumber;
-    if (!serialNumber) return res.status(400).json({ error: "serialNumber is required for remote start." });
+        .status(400)
+        .json({ error: "serialNumber is required for remote start." });
 
     const { idTag, connectorId } = req.body;
-
     // 1. Basic Validation (Check required fields)
     if (!idTag)
-      return res.status(400).json({ error: "idTag is required for remote start." });
+      return res
+        .status(400)
+        .json({ error: "idTag is required for remote start." });
+    // console.log("Payload:=>>>>>>>", idTag, connectorId);
 
     try {
       // --- 2. Central System Pre-Checks (Database) ---
@@ -158,11 +162,16 @@ try {
       // const isIdTagActive = await checkIdTagStatus(idTag);
       // If (!isIdTagActive) return res.status(403).json({ error: "Authorization rejected: ID Tag is inactive or expired." });
 
-      const isConnectorAvailable = await checkConnectorAvailability(serialNumber, connectorId);
-      // console.log(isConnectorAvailable)
+      const isConnectorAvailable = await checkConnectorAvailability(
+        serialNumber,
+        connectorId
+      );
+      // console.log("isConnectorAvailable", isConnectorAvailable);
 
       if (!isConnectorAvailable)
-        return res.status(409).json({ error: "Connector is already busy or faulted." });
+        return res
+          .status(409)
+          .json({ error: "Connector is already busy or faulted." });
 
       const ocppPayload = {
         idTag,
@@ -172,45 +181,63 @@ try {
       // NOTE: 'ocppClient.sendRemoteStart' handles finding the CP's active WebSocket
       // and sends the [2, messageId, "RemoteStartTransaction", {payload}] message.
       const handlerInstance = connectedChargePoints.get(serialNumber);
-      const { status } = await handlerInstance.sendRemoteStart(serialNumber, ocppPayload);
-      // console.log("status", status)
+      if (!handlerInstance) {
+        return res.status(404).json({
+          error: `Charge Point ${serialNumber} is not currently connected.`,
+        });
+      }
+      const { status } = await handlerInstance.sendRemoteStart(
+        serialNumber,
+        ocppPayload
+      );
+      console.log("status", status);
 
       // // --- 4. Handle Confirmation from CP (The RemoteStartTransaction.conf) ---
-      if (status !== 'Accepted') {
-        // Command was accepted by the CP. 
+      if (status !== "Accepted") {
+        // Command was accepted by the CP.
         // The actual transaction status will be reported later via StartTransaction.req.
         // CP rejected the command (e.g., connector unavailable, invalid request).
-        return res.status(409).json({ // 409 Conflict is often used for this
+        return res.status(409).json({
+          // 409 Conflict is often used for this
           status,
-          message: 'Charge Point rejected the remote start command.',
-          cpResponse: status
+          message: "Charge Point rejected the remote start command.",
+          cpResponse: status,
         });
       }
 
       return res.status(200).json({
         status,
-        message: 'Remote start command successfully sent and accepted by Charge Point.'
+        message:
+          "Remote start command successfully sent and accepted by Charge Point.",
       });
-
     } catch (error) {
       // CP not connected, or database error
-      console.error(`Error processing remote start for ${serialNumber}:`, error);
-      return res.status(500).json({ error: `Failed to communicate with Charge Point or command timed out.` });
+      console.error(
+        `Error processing remote start for ${serialNumber}:`,
+        error
+      );
+      return res.status(500).json({
+        error: `Failed to communicate with Charge Point or command timed out.`,
+      });
     }
   });
 
-  app.post('/adminApi/chargepoints/:serialNumber/remotestop', async (req, res) => {
-    const serialNumber = req.params.serialNumber;
-    if (!serialNumber) return res.status(400).json({ error: "serialNumber is required for remote stop." });
+  app.post("/adminApi/chargers/:cpId/remotestop", async (req, res) => {
+    const serialNumber = req.params.cpId;
+    if (!serialNumber)
+      return res
+        .status(400)
+        .json({ error: "serialNumber is required for remote stop." });
 
     // The key payload element for RemoteStopTransaction is the transactionId
     const { csTransactionId } = req.body;
     console.log(`transactionId: ${csTransactionId}`);
 
-
     // 1. Basic Validation (Check required fields)
     if (!csTransactionId || isNaN(csTransactionId))
-      return res.status(400).json({ error: "A valid integer transactionId is required for remote stop." });
+      return res.status(400).json({
+        error: "A valid integer transactionId is required for remote stop.",
+      });
 
     const ocppPayload = {
       csTransactionId,
@@ -219,54 +246,62 @@ try {
 
     try {
       // Check if the transaction is still active in the CSMS database.
-      const { isFinished } = await findDocById(transaction, (ocppPayload));
+      const { isFinished } = await findDocById(transaction, ocppPayload);
       // console.log("findDocById", status)
 
       if (isFinished) {
         // This prevents the CSMS from sending a command that is likely to be rejected.
         return res.status(409).json({
-          error:
-            `Transaction ${csTransactionId} is already ${isFinished} and cannot be remotely stopped.`
+          error: `Transaction ${csTransactionId} is already ${isFinished} and cannot be remotely stopped.`,
         });
       }
 
       // 3. Find Handler and Send Command
       const handlerInstance = connectedChargePoints.get(serialNumber);
       if (!handlerInstance) {
-        return res.status(404).json({ error: `Charge Point ${serialNumber} is not currently connected.` });
-      }
-
-      // Send the RemoteStopTransaction.req and await the .conf response
-      const { status } = await handlerInstance.sendRemoteStop(serialNumber, ocppPayload);
-      console.log("RemoteStopTransaction.conf received: status", status);
-
-      // // --- 4. Handle Confirmation from CP (The RemoteStopTransaction.conf) ---
-      if (status !== 'Accepted') {
-        // CP rejected the command (e.g., ID not found, CP error).
-        return res.status(409).json({
-          status: 'Rejected',
-          message: 'Charge Point rejected the remote stop command.',
-          cpResponse: status
+        return res.status(404).json({
+          error: `Charge Point ${serialNumber} is not currently connected.`,
         });
       }
 
-      // Command accepted by the CP. The actual transaction status change (StopTransaction.req) 
+      // Send the RemoteStopTransaction.req and await the .conf response
+      const { status } = await handlerInstance.sendRemoteStop(
+        serialNumber,
+        ocppPayload
+      );
+      console.log("RemoteStopTransaction.conf received: status", status);
+
+      // // --- 4. Handle Confirmation from CP (The RemoteStopTransaction.conf) ---
+      if (status !== "Accepted") {
+        // CP rejected the command (e.g., ID not found, CP error).
+        return res.status(409).json({
+          status: "Rejected",
+          message: "Charge Point rejected the remote stop command.",
+          cpResponse: status,
+        });
+      }
+
+      // Command accepted by the CP. The actual transaction status change (StopTransaction.req)
       // will be reported later by the CP.
       return res.status(202).json({
         status,
         message: `Remote stop command successfully sent and
-         accepted by Charge Point for JSON.stringify(ocppPayload).`
+         accepted by Charge Point for JSON.stringify(ocppPayload).`,
       });
-
     } catch (error) {
       // Catch exceptions like command timeout, network failure, or unexpected DB errors.
-      console.error(`Error processing remote stop for ${serialNumber} (ID):`, error);
-      return res.status(500).json({ error: `Failed to communicate with Charge Point or command timed out.` });
+      console.error(
+        `Error processing remote stop for ${serialNumber} (ID):`,
+        error
+      );
+      return res.status(500).json({
+        error: `Failed to communicate with Charge Point or command timed out.`,
+      });
     }
   });
 
   app.post(
-    "/adminApi/chargers/change-configuration/:cpId",
+    "/adminApi/chargers/:cpId/change-configuration/",
     async (req, res) => {
       const chargePointId = req.params.cpId;
       const { key, value } = req.body;
@@ -306,7 +341,7 @@ try {
     }
   );
 
-  app.post("/adminApi/chargers/get-configuration/:cpId", async (req, res) => {
+  app.post("/adminApi/chargers/:cpId/get-configuration", async (req, res) => {
     const chargePointId = req.params.cpId;
     const key = req.body || "";
 
@@ -332,7 +367,6 @@ try {
       });
     }
   });
-
 } catch (err) {
   console.log("err", err);
 }
