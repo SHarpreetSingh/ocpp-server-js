@@ -753,7 +753,7 @@ export class OcppHandler {
         if (this.callPromises) this.callPromises.delete(messageId);
         reject(
           new Error(
-            `Timeout: CP ${chargePointId} did not respond to ${action} within 10 seconds.`
+            `Timeout: CP  did not respond to ${action} within 10 seconds.`
           )
         );
       }, 100000);

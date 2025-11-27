@@ -9,25 +9,53 @@ import logger from "./logger.js";
 import bodyParser from "body-parser";
 import { checkConnectorAvailability, findDocById } from "./services/queries.js";
 import transaction from "./models/transaction.js";
-
+import cors from "cors";
+import chargePoint from "./models/chargePoint.js";
 app.use(bodyParser.json());
 
 const connectedChargePoints = new Map();
+
+// ✅ Allow frontend (React) to call backend (CSMS)
+app.use(
+  cors({
+    origin: "http://localhost:5173", // React dev server
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true,
+  })
+);
+
+// const apiLoggerMiddleware = (req, res, next) => {
+//   // Determine the client IP address, accounting for proxies
+//   const clientIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+
+//   const logEntry = `[API LOG] - ${new Date().toISOString()}
+//   Source IP: ${clientIp}
+//   Method: ${req.method}
+//   Path: ${req.originalUrl}
+//   Body Keys: ${Object.keys(req.body).join(", ") || "None"}
+// --------------------------------------------------`;
+
+//   console.log(logEntry);
+//   // **Crucial Step:** Call next() to allow the request to proceed to the route handlers.
+//   next();
+// };
 
 const apiLoggerMiddleware = (req, res, next) => {
   // Determine the client IP address, accounting for proxies
   const clientIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
 
+  // ✅ Safely handle empty or undefined body
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+
   const logEntry = `[API LOG] - ${new Date().toISOString()}
   Source IP: ${clientIp}
   Method: ${req.method}
   Path: ${req.originalUrl}
-  Body Keys: ${Object.keys(req.body).join(", ") || "None"}
+  Body Keys: ${Object.keys(body).length > 0 ? Object.keys(body).join(", ") : "None"}
 --------------------------------------------------`;
 
   console.log(logEntry);
-  // **Crucial Step:** Call next() to allow the request to proceed to the route handlers.
-  next();
+  next(); // Crucial: continue to next middleware/route
 };
 
 app.use(apiLoggerMiddleware);
@@ -301,7 +329,7 @@ try {
   });
 
   app.post(
-    "/adminApi/chargers/:cpId/change-configuration/",
+    "/adminApi/chargers/:cpId/changeconfiguration/",
     async (req, res) => {
       const chargePointId = req.params.cpId;
       const { key, value } = req.body;
@@ -341,7 +369,7 @@ try {
     }
   );
 
-  app.post("/adminApi/chargers/:cpId/get-configuration", async (req, res) => {
+  app.post("/adminApi/chargers/:cpId/getconfiguration", async (req, res) => {
     const chargePointId = req.params.cpId;
     const key = req.body || "";
 
@@ -363,6 +391,54 @@ try {
     } catch (error) {
       res.status(500).json({
         message: "❌ Failed to send ChangeConfiguration request.",
+        error: error.message,
+      });
+    }
+  });
+
+  app.get("/adminApi/config/:cpId", async (req, res) => {
+    const cpId = req.params.cpId;
+
+    try {
+      // 💡 Step 1: Query your database to find the CP
+      const cpRecord = await findDocById(chargePoint, { serialNumber: cpId });
+      // const cpRecord = await db.collection('chargepoints').findOne({ cpId: cpId });
+
+      if (!cpRecord) {
+        // Fallback if the CP isn't in the database
+        return res.status(404).send({ message: "Charge Point not found" });
+      }
+
+      // ✅ If no connectors exist, auto-create them
+      if (!cpRecord.connectors || cpRecord.connectors.length === 0) {
+        const defaultConnectors = [
+          { connectorId: 1, status: "Available", currentTransactionId: null },
+          { connectorId: 2, status: "Available", currentTransactionId: null },
+        ];
+
+        cpRecord = await chargePoint.findOneAndUpdate(
+          { serialNumber: cpId },
+          { $set: { connectors: defaultConnectors } },
+          { new: true }
+        );
+
+        console.log(`✨ Initialized default connectors for ${cpId}`);
+      }
+      // 💡 Step 2: Extract or determine the connector count
+      // You must store this value somewhere in your CP database schema!
+      const connectorCount = cpRecord.connectors.length; // Assuming your DB stores an array of connector objects
+      // OR: const connectorCount = cpRecord.connectorCount || 1;
+
+      // 💡 Step 3: Send the required data back to the frontend
+      res.json({
+        cpId: cpId,
+        connectorCount: connectorCount,
+        connectors: cpRecord.connectors,
+        // Optional: Include other initial settings here (e.g., heartbeatInterval)
+      });
+    } catch (error) {
+      res.status(500).json({
+        message: "❌ Failed to send config request.",
         error: error.message,
       });
     }
