@@ -14,6 +14,7 @@ import StartTransactionSchema from "./jsonSchemas/StartTransaction.json" with { 
 import StopTransactionSchema from "./jsonSchemas/StopTransaction.json" with { type: "json" };
 import MeterValuesSchema from "./jsonSchemas/MeterValuesSchema.json" with { type: "json" };
 import { logError } from "./Utilitiy/LoggerHelper.js";
+import IdTag from "./models/IdTag.js";
 const ajv = new Ajv();
 addFormats(ajv);
 
@@ -798,6 +799,53 @@ export class OcppHandler {
     });
   }
 
+  mapIdTagToAuthorizationData(idTagDoc) {
+    return {
+      idTag: idTagDoc.idTag,
+      idTagInfo: {
+        status: idTagDoc.status,
+        parentIdTag: idTagDoc.parentTag || undefined,
+        expiryDate: idTagDoc.expiryDate?.toISOString(),
+      },
+    };
+  }
+
+  async sendLocalList(listVersion = Date.now()) {
+    try {
+      // 1. Fetch idTags from DB
+      const tags = await IdTag.find({});
+
+      // 2. Convert DB → OCPP AuthorizationData
+      const localAuthorizationList = tags.map((t) =>
+        this.mapIdTagToAuthorizationData(t)
+      );
+
+      // 3. Generate OCPP message ID
+      const messageId = "SendLocalList_" + Date.now();
+
+      // 4. Build OCPP CALL message
+      const ocppMessage = [
+        2,
+        messageId,
+        "SendLocalList",
+        {
+          listVersion,
+          updateType: "Full",
+          localAuthorizationList,
+        },
+      ];
+
+      // 5. Send to CP
+      this.ws.send(JSON.stringify(ocppMessage));
+      logger.info(`CSMS -> CP : ${JSON.stringify(ocppMessage)}`);
+      console.log("📤 SendLocalList.req => CP", this.cpId);
+
+      return { success: true, messageId };
+    } catch (error) {
+      console.error("❌ Error in sendLocalList:", error);
+      return { success: false, error: error.message };
+    }
+  }
   // Handle a "CallResult" message (Response from a Central System initiated call)
   async handleCallResult(message) {
     const [type, messageId, payload] = message;
@@ -833,6 +881,10 @@ export class OcppHandler {
 
       case "RemoteStartTransaction":
         isValid = this.validateRemoteStartTransactionConf(message, action);
+        break;
+
+      case "SendLocalList":
+        isValid = this.validateSendLocalListConf(message, action);
         break;
 
       default:
@@ -1149,6 +1201,35 @@ export class OcppHandler {
           items: { type: "string" },
         },
       },
+      additionalProperties: false,
+    };
+
+    const valid = await this.validatePayload(schema, payload);
+    if (!valid) {
+      console.error(`Validation failed for ${action} :`, valid);
+      logError({
+        action,
+        messageId,
+        payload,
+        reason: "FormatViolation",
+      });
+    }
+    return valid;
+  }
+
+  async validateSendLocalListConf(message, action) {
+    const [messageType, messageId, payload] = message;
+    console.log("message=======>>>>>>>>>", payload);
+
+    const schema = {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: ["Accepted", "Rejected"],
+        },
+      },
+      required: ["status"],
       additionalProperties: false,
     };
 

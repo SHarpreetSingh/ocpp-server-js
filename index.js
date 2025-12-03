@@ -328,46 +328,43 @@ try {
     }
   });
 
-  app.post(
-    "/adminApi/chargers/:cpId/changeconfiguration/",
-    async (req, res) => {
-      const chargePointId = req.params.cpId;
-      const { key, value } = req.body;
+  app.post("/adminApi/chargers/:cpId/changeconfiguration", async (req, res) => {
+    const chargePointId = req.params.cpId;
+    const { key, value } = req.body;
 
-      console.log("API hit:", req.params, "req.body:", req.body);
+    console.log("API hit:", req.params, "req.body:", req.body);
 
-      const handlerInstance = connectedChargePoints.get(chargePointId);
-      if (!handlerInstance) {
-        return res
-          .status(404)
-          .json({ message: "❌ Charge point not connected." });
-      }
-
-      if (!key || !value) {
-        return res.status(400).json({
-          message:
-            '❌ Invalid request body. Both "key" and "value" are required.',
-        });
-      }
-
-      try {
-        const result = await handlerInstance.handleChangeConfiguration(
-          chargePointId,
-          key,
-          value
-        );
-        res.status(200).json({
-          message: "✅ ChangeConfiguration request sent successfully.",
-          response: result,
-        });
-      } catch (error) {
-        res.status(500).json({
-          message: "❌ Failed to send ChangeConfiguration request.",
-          error: error.message,
-        });
-      }
+    const handlerInstance = connectedChargePoints.get(chargePointId);
+    if (!handlerInstance) {
+      return res
+        .status(404)
+        .json({ message: "❌ Charge point not connected." });
     }
-  );
+
+    if (!key || !value) {
+      return res.status(400).json({
+        message:
+          '❌ Invalid request body. Both "key" and "value" are required.',
+      });
+    }
+
+    try {
+      const result = await handlerInstance.handleChangeConfiguration(
+        chargePointId,
+        key,
+        value
+      );
+      res.status(200).json({
+        message: "✅ ChangeConfiguration request sent successfully.",
+        response: result,
+      });
+    } catch (error) {
+      res.status(500).json({
+        message: "❌ Failed to send ChangeConfiguration request.",
+        error: error.message,
+      });
+    }
+  });
 
   app.post("/adminApi/chargers/:cpId/getconfiguration", async (req, res) => {
     const chargePointId = req.params.cpId;
@@ -392,6 +389,29 @@ try {
       res.status(500).json({
         message: "❌ Failed to send ChangeConfiguration request.",
         error: error.message,
+      });
+    }
+  });
+
+  app.post("/adminApi/chargers/:cpId/send-local-list", async (req, res) => {
+    const cpId = req.params.cpId;
+    const listVersion = req.body.listVersion || Date.now();
+
+    const handler = connectedChargePoints.get(cpId);
+    if (!handler) {
+      return res.status(404).json({ msg: "❌ CP not connected" });
+    }
+
+    try {
+      const result = await handler.sendLocalList(listVersion);
+      res.json({
+        message: "📤 SendLocalList sent to CP successfully",
+        result,
+      });
+    } catch (err) {
+      res.status(500).json({
+        error: "❌ Failed to send SendLocalList",
+        details: err.message,
       });
     }
   });
