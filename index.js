@@ -416,6 +416,33 @@ try {
     }
   });
 
+  app.post("/adminApi/chargers/:cpId/reserveNow", async (req, res) => {
+    const { connectorId, expiryDate, idTag, parentIdTag = null } = req.body;
+    const cpId = req.params.cpId;
+    const handler = connectedChargePoints.get(cpId);
+    if (!handler) {
+      return res.status(404).json({ msg: "❌ CP not connected" });
+    }
+
+    try {
+      const result = await handler.reserveNow({
+        connectorId,
+        expiryDate,
+        idTag,
+        parentIdTag,
+      });
+      res.json({
+        message: "📤 reserveNow sent to CP successfully",
+        result,
+      });
+    } catch (err) {
+      res.status(500).json({
+        error: "❌ Failed to send reserveNow",
+        details: err.message,
+      });
+    }
+  });
+
   app.get("/adminApi/config/:cpId", async (req, res) => {
     const cpId = req.params.cpId;
 
