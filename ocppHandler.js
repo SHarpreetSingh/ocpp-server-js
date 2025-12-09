@@ -39,7 +39,7 @@ export class OcppHandler {
           this.handleCall(parsedMessage);
           break;
         case 3: // CallResult
-          logger.info(`CP -> CSMS : ${message}`);
+          logger.info(`CallResult , CP -> CSMS : ${message}`);
           this.handleCallResult(parsedMessage);
           break;
         case 4: // CallError
@@ -91,6 +91,109 @@ export class OcppHandler {
         logger.info(`Unsupported action: ${action}`);
         break;
     }
+  }
+
+  async getDiagnostics(serialNumber, ocppPayload) {
+    const action = "GetDiagnostics";
+    const messageId = `${action}-${Date.now()}`;
+
+    // Construct the payload based on provided arguments
+
+    const ocppMessage = [2, messageId, action, ocppPayload];
+
+    return new Promise((resolve, reject) => {
+      // Assume 'this' refers to the OcppHandler instance
+      if (!this.ws || this.ws.readyState !== 1) {
+        return reject(new Error("WebSocket connection is not open. Cannot send GetDiagnostics."));
+      }
+
+      const timeout = setTimeout(() => {
+        if (this.callPromises) this.callPromises.delete(messageId);
+        reject(
+          new Error(`Timeout: CP ${this.chargePointId} did not respond to ${action} within 10 seconds.`)
+        );
+      }, 10000);
+
+      if (!this.callPromises) {
+        clearTimeout(timeout);
+        return reject(
+          new Error(
+            "Internal error: 'this.callPromises' is not available."
+          )()
+        );
+      }
+
+      this.callPromises.set(messageId, {
+        resolve,
+        reject, action
+      });
+
+      try {
+        if (!this.ws && this.ws.readyState !== WebSocket.OPEN) {
+          clearTimeout(timeout);
+          this.callPromises.delete(messageId);
+          reject(
+            new Error(
+              "WebSocket connection is not open. Failed to send message."
+            )
+          );
+        }
+
+        logger.info(`CSMS -> CP : ${JSON.stringify(ocppMessage)}`);
+        this.ws.send(JSON.stringify(ocppMessage));
+      } catch (error) {
+        clearTimeout(timeout);
+        this.callPromises.delete(messageId);
+        reject(
+          new Error(`Failed to send message over WebSocket: ${error}`)
+        );
+      }
+    });
+  }
+
+  async updateFirmware(serialNumber, ocppPayload) {
+    const action = "UpdateFirmware";
+    const messageId = `${action}-${Date.now()}`;
+
+    const message = [
+      2, // 
+      messageId,
+      action,
+      ocppPayload,
+    ];
+
+    return new Promise((resolve, reject) => {
+      // Assume 'this' refers to the OcppHandler instance
+      if (!this.ws || this.ws.readyState !== 1) {
+        return reject(new Error("WebSocket connection is not open. Cannot send UpdateFirmware."));
+      }
+
+      const timeout = setTimeout(() => {
+        if (this.callPromises) this.callPromises.delete(messageId);
+        reject(
+          new Error(`Timeout: CP ${this.chargePointId} did not respond to ${action} within 10 seconds.`)
+        );
+      }, 10000);
+
+      if (!this.callPromises) {
+        clearTimeout(timeout);
+        return reject(
+          new Error(
+            "Internal error: 'this.callPromises' is not available."
+          )()
+        );
+      }
+
+      this.callPromises.set(messageId, { resolve, reject, action });
+
+      try {
+        this.ws.send(JSON.stringify(message));
+      } catch (error) {
+        clearTimeout(timeout);
+        this.callPromises.delete(messageId);
+        reject(error);
+      }
+    });
   }
 
   // Implement handlers for each OCPP action
@@ -612,7 +715,7 @@ export class OcppHandler {
     // Log the event for debugging
     console.log(
       `Received StatusNotification from ${this.chargePointId} ` +
-        `for Connector ${connectorId}: ${status} (Error: ${errorCode || "None"})`
+      `for Connector ${connectorId}: ${status} (Error: ${errorCode || "None"})`
     );
 
     try {
@@ -848,9 +951,12 @@ export class OcppHandler {
   }
   // Handle a "CallResult" message (Response from a Central System initiated call)
   async handleCallResult(message) {
+    // console.debug("CallResult message", message);
+
     const [type, messageId, payload] = message;
+    // const payload = (message.length === 4) ? fourthElement : thirdElement;
     if (type !== 3 || !payload || typeof payload !== "object") {
-      console.error("Malformed CallResult:", message);
+      console.error("CallResult err:", message);
       return;
     }
 
@@ -860,11 +966,11 @@ export class OcppHandler {
       return;
     }
 
-    const { resolve, action, timeout, chargePointId, key, value } = callData;
+    const { resolve, reject, timeout, action, chargePointId, key, value } = callData;
     let isValid = true;
 
     // Choose validation schema based on the action
-    console.log("action", action);
+    console.log("action here", action);
     switch (action) {
       case "ChangeConfiguration":
         isValid = await this.validateChangeConfiguration(message);
@@ -887,16 +993,27 @@ export class OcppHandler {
         isValid = this.validateSendLocalListConf(message, action);
         break;
 
+      case "GetDiagnostics":
+        // Validation for Diagnostics: Check if the required 'fileName' is present.
+        isValid =await this.validateGetDiagnosticsConf(message, action);
+        break;
+
+      case "UpdateFirmware":
+        // Validation for Diagnostics: Check if the required 'fileName' is present.
+        isValid = this.validateUpdateFirmwareConf(message, action);
+        break;
+
       default:
         console.warn(`No schema found for action: ${action}`);
     }
     // console.warn(`No promise for messageId ${messageId}`);
-
+    clearTimeout(timeout);
     // Validate payload (if schema exists)
     if (!isValid) {
       console.error(`Validation failed for ${action}`, payload);
       this.callPromises.delete(messageId);
-      return;
+      reject(new Error(`Validation failed for action: ${action}`));
+      return
     }
     resolve(payload);
     this.callPromises.delete(messageId);
@@ -1028,7 +1145,7 @@ export class OcppHandler {
       if (!this.callPromises) {
         clearTimeout(timeout);
         return reject(
-          new new Error(
+          new Error(
             "Internal error: 'this.callPromises' is not available."
           )()
         );
@@ -1245,4 +1362,69 @@ export class OcppHandler {
     }
     return valid;
   }
+
+  async validateGetDiagnosticsConf(message, action) {
+    const [messageType, messageId, payload] = message;
+
+    console.log(`Payload received for ${action} confirmation:`, payload);
+
+    // Schema definition for GetDiagnostics.conf
+    const schema = {
+      type: "object",
+      properties: {
+        // The CP must return the filename it intends to use for the upload.
+        fileName: {
+          type: "string",
+          maxLength: 255,
+        },
+      },
+      required: ["fileName"],
+      additionalProperties: false,
+    };
+
+    // Assuming this.validatePayload is your existing JSON Schema validator function
+    const valid = await this.validatePayload(schema, payload);
+    if (!valid) {
+      console.error(`Validation failed for ${action} (Missing FileName or incorrect format):`, payload);
+      logError({
+        action,
+        messageId,
+        payload,
+        reason: "FormatViolation",
+        cpId: this.chargePointId, // Assuming chargePointId is available on 'this'
+      });
+    }
+    return valid;
+  }
+
+  async validateUpdateFirmwareConf(message, action) {
+    const [messageType, messageId, payload] = message;
+
+    console.log(`Payload received for ${action} confirmation:`, payload);
+
+    // Schema definition: Must be an object with no properties
+    const schema = {
+      type: "object",
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    };
+
+    // Assuming this.validatePayload is your existing JSON Schema validator function
+    const valid = await this.validatePayload(schema, payload);
+
+    if (!valid) {
+      console.error(`Validation failed for ${action} (Expected empty object {}):`, payload);
+      // Log the error using your existing mechanism
+      logError({
+        action,
+        messageId,
+        payload,
+        reason: "FormatViolation",
+        cpId: this.chargePointId,
+      });
+    }
+    return valid;
+  }
+
 }

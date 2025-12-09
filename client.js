@@ -11,7 +11,9 @@ try {
 
   const message = Buffer.from(`[2,"12345","MeterValues",{"connectorId": 1,"transactionId": 517, "meterValue": [{ "timestamp":"${uniqueId}", "sampledValues": [{ "value": "1319" }] }]}]`)
 
-  const jsonString = `[2,"12345","StatusNotification",{"connectorId":2,"status":"Unavailable","errorCode":"NoError","timestamp":"${uniqueId}"}]`; //Available, Unavailable
+  // `[2,"12345","StatusNotification",{"connectorId":2,"status":"Unavailable","errorCode":"NoError","timestamp":"${uniqueId}"}]`; //Available, Unavailable
+
+  const jsonString = `[3,"12345","GetDiagnostics",{"fileName":"CP42-Logs-20251208.zip"}]`;
 
   // const message = Buffer.from('[2,"12345","StatusNotification",{"connectorId":"1","status":"Preparing","errorCode":"NO ERROR"]');
   // const message = Buffer.from(jsonString);
@@ -23,15 +25,11 @@ try {
   });
 
   ws.on("message", (rawMessage) => {
-
     let msg = JSON.parse(rawMessage);
     console.log("Received:", msg);
-    /**
-     * for RemoteStartTransaction 
-     */ //Rejected
-    const responseArray = Buffer.from(`[3,"${msg[1]}", "RemoteStartTransaction",{ "status": "Accepted"}]`)
-    console.log("Received:", msg[1]);
-
+   
+    const responseArray = Buffer.from(`[3,"${msg[1]}",{"fileName":"CP42-Logs-20251208.zip"}]`)
+    console.log("Received:", responseArray);
     ws.send(responseArray);
   });
 } catch (err) {

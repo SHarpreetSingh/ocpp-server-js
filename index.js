@@ -463,6 +463,211 @@ try {
       });
     }
   });
+
+  app.get("/adminApi/chargers/:cpId/reserve", async (req, res) => {
+    const chargePointId = req.params.cpId;
+    const { key, value } = req.body;
+
+    console.log("API hit:", req.params, "req.body:", req.body);
+
+    const { reserveNowCommand } = connectedChargePoints.get(chargePointId);
+    if (!handlerInstance) {
+      return res
+        .status(404)
+        .json({ message: "❌ Charge point not connected." });
+    }
+
+    try {
+      const result = await reserveNowCommand(
+        chargePointId,
+
+      );
+
+
+    } catch (error) {
+      res.status(500).json({
+        message: "❌ Failed to send ChangeConfiguration request.",
+        error: error.message,
+      });
+    }
+
+  })
+
+  app.post("/adminApi/chargers/:cpId/cancel-reservation", async (req, res) => {
+    // 1. Validate Input
+    const chargePointId = req.params.cpId;
+    const reservationId = req.body.reservationId;
+
+    if (!reservationId || typeof reservationId !== 'number' || reservationId <= 0) {
+      return res
+        .status(400)
+        .json({
+          message: "❌ Invalid request body. 'reservationId' (number > 0) is required."
+        });
+    }
+
+    // 2. Locate the Handler Instance
+    const handlerInstance = connectedChargePoints.get(chargePointId);
+    if (!handlerInstance) {
+      return res
+        .status(404)
+        .json({
+          message: `❌ Charge point ${chargePointId} is not connected or handler not found.`
+        });
+    }
+
+    try {
+      // 3. Send the CancelReservation.req command and wait for the confirmation.
+      const result = await handlerInstance.cancelReservation(reservationId);
+
+      const status = result.status;
+
+      // 4. Handle Confirmation Status
+      if (status === 'Accepted') {
+        // IMPORTANT: Remember to update your database status to 'Cancelled' here.
+        res.status(200).json({
+          message: `✅ Reservation ID ${reservationId} successfully Accepted by CP.`,
+          cpResponse: result,
+        });
+      } else {
+        // Status: 'Rejected'
+        res.status(409).json({
+          message: `⚠️ Cancellation Rejected by CP (Status: ${status}). The reservation may not exist on the CP.`,
+          cpResponse: result,
+        });
+      }
+
+    } catch (error) {
+      console.error(`Error initiating CancelReservation for ${chargePointId}:`, error.message);
+      res.status(500).json({
+        message: `❌ Failed to send CancelReservation command or command timed out.`,
+        error: error.message,
+      });
+    }
+  });
+
+  // 
+  app.post("/adminApi/chargers/:cpId/getDiagnostics", async (req, res) => {
+    const serialNumber = req.params.cpId;
+    if (!serialNumber)
+      return res
+        .status(400)
+        .json({ error: "serialNumber is required for remote stop." });
+
+    const { location, startTime, stopTime } = req.body;
+
+    // 1. Basic Input Validation
+    if (!location || typeof location !== 'string' || !location.startsWith('ftp') && !location.startsWith('http')) {
+      return res
+        .status(400)
+        .json({
+          message: "❌ Invalid request. 'location' (a valid FTP/HTTP URL) is required."
+        });
+    }
+
+    // 2. Locate the Handler Instance
+    const handlerInstance = connectedChargePoints.get(serialNumber);
+    if (!handlerInstance) {
+      return res
+        .status(404)
+        .json({
+          message: `❌ Charge point ${serialNumber} is not connected.`
+        });
+    }
+
+    const ocppPayload = {
+      location, startTime, stopTime
+    };
+
+    try {
+      // 3. Send the GetDiagnostics.req command via the OcppHandler instance.
+      const result = await handlerInstance.getDiagnostics(
+        serialNumber,
+        ocppPayload
+      );
+
+      res.status(200).json({
+        message: `Diagnostics request accepted. CP will upload logs as: ${result}`,
+        result,
+        // The CP will send asynchronous DiagnosticsStatusNotification messages later.
+        // cpResponse: result,
+      });
+
+    } catch (error) {
+      console.error(`Error initiating GetDiagnostics for ${serialNumber}:`, error.message);
+      let statusCode = 500;
+      if (error.message.includes("Validation failed")) {
+        statusCode = 400;
+      }
+      res.status(statusCode).json({
+        message: `❌ Failed to send GetDiagnostics command.`,
+        error: error.message,
+      });
+    }
+  });
+
+  // 
+  app.post("/adminApi/chargers/:cpId/update-firmware", async (req, res) => {
+    const serialNumber = req.params.cpId;
+    if (!serialNumber)
+      return res
+        .status(400)
+        .json({ error: "serialNumber is required for remote stop." });
+
+    const { location, retrieveDate } = req.body;
+
+    // 1. Basic Input Validation (Location and ISO 8601 Timestamp)
+    if (!location || !retrieveDate || typeof location !== 'string' || typeof retrieveDate !== 'string') {
+      return res
+        .status(400)
+        .json({
+          message: "❌ Invalid request. 'location' (firmware URL) and 'retrieveDate' (ISO 8601 time) are required."
+        });
+    }
+
+    // 2. Locate the Handler Instance
+    const handlerInstance = connectedChargePoints.get(serialNumber);
+    if (!handlerInstance) {
+      return res
+        .status(404)
+        .json({
+          message: `❌ Charge point ${serialNumber} is not connected.`
+        });
+    }
+
+    try {
+      // 3. (waits for immediate acknowledgement)
+      const result = await handlerInstance.updateFirmware(
+        serialNumber,
+        req.body
+      );
+
+      console.debug("updateFirmwareCommand", result)
+      // Check if the result is an object and if it is empty
+      const isSuccessConf = typeof result === 'object' && result !== null &&
+        Object.keys(result).length === 0;
+
+      if (!isSuccessConf) {
+        return res.status(409).json({
+          message: `CP acknowledged, but response payload was unexpected or non-empty.`,
+          cpResponse: result,
+        });
+      }
+
+      // 4. Confirmation Payload is empty {}, so success means acceptance.
+      res.status(200).json({
+        message: `Firmware update scheduled for ${retrieveDate}. CP acknowledged the command.`,
+        cpResponsed: result, // Will be {} if successful
+      });
+    } catch (error) {
+      console.error(`Error initiating UpdateFirmware for ${serialNumber}:`, error);
+      res.status(500).json({
+        message: `Failed to send UpdateFirmware command or command timed out.`,
+        error: error.message,
+      });
+    }
+  });
+
 } catch (err) {
   console.log("err", err);
 }
