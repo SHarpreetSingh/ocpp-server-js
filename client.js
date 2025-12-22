@@ -22,17 +22,29 @@ try {
 
   ws.on("open", () => {
     console.log("Connected to CSMS ✅");
+    // const responseArray = Buffer.from(`[2, "FS_ID_1", "FirmwareStatusNotification", {"status": "UpdateScheduled"}]`)
+    const responseArray = Buffer.from(`[2, "DS_ID_1", "DiagnosticsStatusNotification", {"status": "Uploaded"}]`)
+    ws.send(responseArray);
+
   });
 
   ws.on("message", (rawMessage) => {
     let msg = JSON.parse(rawMessage);
-    console.log("Received:", msg);
+    console.log("Received:==>", msg);
    
     const responseArray = Buffer.from(`[3,"${msg[1]}",{"fileName":"CP42-Logs-20251208.zip"}]`)
-    console.log("Received:", responseArray);
-    ws.send(responseArray);
+    // const responseArray = Buffer.from(`[4, "FS_ID_1", "FirmwareStatusNotification", {"status": "UpdateScheduled"}]`)
+
+    // console.log("Received:", responseArray);
+    // ws.send(responseArray);
   });
 } catch (err) {
   console.log(err);
 }
+
+// [4, "FS_ID_2", "FirmwareStatusNotification", {"status": "Downloading"}]
+// [4, "FS_ID_3", "FirmwareStatusNotification", {"status": "Downloaded"}]
+// [4, "FS_ID_4", "FirmwareStatusNotification", {"status": "Installed"}]
+
+
 

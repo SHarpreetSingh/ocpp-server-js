@@ -39,10 +39,11 @@ export class OcppHandler {
           this.handleCall(parsedMessage);
           break;
         case 3: // CallResult
-          logger.info(`CallResult , CP -> CSMS : ${message}`);
+          logger.info(`CP -> CSMS : ${message}`);
           this.handleCallResult(parsedMessage);
           break;
         case 4: // CallError
+          logger.info(`CP -> CSMS : ${message}`);
           this.handleCallError(parsedMessage);
           break;
         default:
@@ -55,9 +56,8 @@ export class OcppHandler {
   }
 
   // Handle a "Call" message (Charge Point initiated)
-  handleCall(message) {
+  async handleCall(message) {
     const [messageType, messageId, action, payload] = message;
-
     switch (action) {
       case "BootNotification":
         // A Charge Point MUST again contact the Central System by sending a BootNotification request after a restart.
@@ -83,6 +83,13 @@ export class OcppHandler {
         // 3. If valid, process the message
         this.handleStatusNotification(messageId, payload, message);
         break;
+      case "FirmwareStatusNotification":
+        // 3. If valid, process the message
+        this.handleFirmwareStatusNotification(messageId, payload, message)
+        break;
+      case "DiagnosticsStatusNotification":
+        await this.handleDiagnosticsStatusNotification(messageId, payload, message);
+        break;
 
       default:
         console.warn(`Unsupported action: ${action}`);
@@ -91,6 +98,105 @@ export class OcppHandler {
         logger.info(`Unsupported action: ${action}`);
         break;
     }
+  }
+
+  async handleDiagnosticsStatusNotification(messageId, payload, message) {
+    console.log(`Received DiagnosticsStatusNotification from ${this.chargePointId}:`, payload.status);
+
+    // 1. Define the validation schema
+    const diagnosticsStatusSchema = {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: [
+            "Idle",
+            "Uploaded",
+            "UploadFailed",
+            "Uploading"
+          ],
+          description: "The status of the diagnostics file upload process."
+        }
+      },
+      required: ["status"],
+      additionalProperties: false
+    };
+
+    // 2. Validate the incoming payload
+    // Assuming 'this.validatePayload' is your existing JSON Schema validator
+    if (!(await this.validatePayload(diagnosticsStatusSchema, payload))) {
+      logError({
+        action: message[2], // "DiagnosticsStatusNotification"
+        messageId,
+        payload,
+        reason: "FormatViolation",
+        cpId: this.chargePointId
+      });
+
+      return this.sendError(
+        messageId,
+        "FormatViolation",
+        "Mandatory 'status' field missing or invalid in notification payload."
+      );
+    }
+
+    const newStatus = payload.status;
+    console.log(`[STATUS UPDATE]: Updating diagnostics job status for CP ${this.chargePointId} to: ${newStatus}`);
+
+    // IMPORTANT: In a real system, you would update your database job status here.
+    // Example: await updateDiagnosticsJobStatus(this.chargePointId, newStatus);
+
+    return this.sendResult(messageId, {});
+  }
+
+
+  async handleFirmwareStatusNotification(messageId, payload, message) {
+    console.log(`Received FirmwareStatusNotification from ${this.chargePointId}:`, payload.status);
+
+    // 1. Define the validation schema
+    const firmwareStatusSchema = {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: [
+            "Downloaded",
+            "Downloading",
+            "DownloadFailed",
+            "InstallationFailed",
+            "Installed",
+            "Installing",
+            "Idle",
+            "UpdateScheduled"
+          ],
+          description: "The status of the firmware update process."
+        }
+      },
+      required: ["status"],
+      additionalProperties: false
+    };
+
+    // 2. Validate the incoming payload
+    if (!(await this.validatePayload(firmwareStatusSchema, payload))) {
+      logError({
+        action: message[2], // "FirmwareStatusNotification"
+        messageId,
+        payload,
+        reason: "FormatViolation",
+        cpId: this.chargePointId
+      });
+
+      // We log the error internally but succeed the communication link.
+      // return this.sendResult(messageId, {});
+      return this.sendError(messageId, "FormatViolation", "Mandatory 'status' field missing or invalid in notification.");
+    }
+
+    // IMPORTANT: In a real system, you would update your database job status here.
+    const newStatus = payload.status;
+    console.log(`[STATUS UPDATE]: Updating job status for CP ${this.chargePointId} to: ${newStatus}`);
+
+    // Example: await updateFirmwareJobStatus(this.chargePointId, newStatus);
+    return this.sendResult(messageId, {});
   }
 
   async getDiagnostics(serialNumber, ocppPayload) {
@@ -155,7 +261,7 @@ export class OcppHandler {
     const action = "UpdateFirmware";
     const messageId = `${action}-${Date.now()}`;
 
-    const message = [
+    const ocppMessage = [
       2, // 
       messageId,
       action,
@@ -187,7 +293,8 @@ export class OcppHandler {
       this.callPromises.set(messageId, { resolve, reject, action });
 
       try {
-        this.ws.send(JSON.stringify(message));
+        logger.info(`CSMS -> CP : ${JSON.stringify(ocppMessage)}`);
+        this.ws.send(JSON.stringify(ocppMessage));
       } catch (error) {
         clearTimeout(timeout);
         this.callPromises.delete(messageId);
@@ -995,12 +1102,12 @@ export class OcppHandler {
 
       case "GetDiagnostics":
         // Validation for Diagnostics: Check if the required 'fileName' is present.
-        isValid =await this.validateGetDiagnosticsConf(message, action);
+        isValid = await this.validateGetDiagnosticsConf(message, action);
         break;
 
       case "UpdateFirmware":
         // Validation for Diagnostics: Check if the required 'fileName' is present.
-        isValid = this.validateUpdateFirmwareConf(message, action);
+        isValid = await this.validateUpdateFirmwareConf(message, action);
         break;
 
       default:
@@ -1009,6 +1116,7 @@ export class OcppHandler {
     // console.warn(`No promise for messageId ${messageId}`);
     clearTimeout(timeout);
     // Validate payload (if schema exists)
+    console.log("isValid",isValid)
     if (!isValid) {
       console.error(`Validation failed for ${action}`, payload);
       this.callPromises.delete(messageId);
@@ -1405,9 +1513,14 @@ export class OcppHandler {
     // Schema definition: Must be an object with no properties
     const schema = {
       type: "object",
-      properties: {},
-      required: [],
-      additionalProperties: false,
+      properties: {
+        status: {
+          type: "string",
+          enum: ["Accepted", "Rejected"]
+        }
+      },
+      required: ["status"],
+      additionalProperties: false
     };
 
     // Assuming this.validatePayload is your existing JSON Schema validator function

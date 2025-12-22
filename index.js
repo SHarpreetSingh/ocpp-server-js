@@ -12,6 +12,14 @@ import transaction from "./models/transaction.js";
 import cors from "cors";
 import chargePoint from "./models/chargePoint.js";
 app.use(bodyParser.json());
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const uploadDir = path.join(__dirname, 'uploaded_diagnostics');
 
 const connectedChargePoints = new Map();
 
@@ -23,6 +31,29 @@ app.use(
     credentials: true,
   })
 );
+
+// Ensure the upload directory exists
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir);
+  console.log(`Created upload directory: ${uploadDir}`);
+}
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+      // Use the dedicated directory for storing diagnostics files
+      cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+      // Use the original filename provided by the CP (e.g., CP-MANUAL-003-logs.zip)
+      // Sanitizing the filename might be needed in a production environment
+      cb(null, file.originalname);
+    }
+  });
+
+  const upload = multer({
+    storage: storage,
+    limits: { fileSize: 1 * 1024 * 1024 } // 10MB file size limit for example
+  }).single('diagnostics');
 
 // const apiLoggerMiddleware = (req, res, next) => {
 //   // Determine the client IP address, accounting for proxies
@@ -507,7 +538,6 @@ try {
       res.status(200).json({
         message: `Diagnostics request accepted. CP will upload logs as: ${result}`,
         result,
-        // The CP will send asynchronous DiagnosticsStatusNotification messages later.
         // cpResponse: result,
       });
 
@@ -562,15 +592,7 @@ try {
 
       console.debug("updateFirmwareCommand", result)
       // Check if the result is an object and if it is empty
-      const isSuccessConf = typeof result === 'object' && result !== null &&
-        Object.keys(result).length === 0;
 
-      if (!isSuccessConf) {
-        return res.status(409).json({
-          message: `CP acknowledged, but response payload was unexpected or non-empty.`,
-          cpResponse: result,
-        });
-      }
 
       // 4. Confirmation Payload is empty {}, so success means acceptance.
       res.status(200).json({
@@ -584,6 +606,35 @@ try {
         error: error.message,
       });
     }
+  });
+
+
+  app.post('/adminApi/upload/logs', (req, res) => {
+    upload(req, res, (err) => {
+      if (err instanceof multer.MulterError) {
+        console.error("Multer Error:", err.message);
+        // Example: Handle file size limit error
+        return res.status(400).send({ message: `Upload failed: ${err.message}` });
+      } else if (err) {
+        console.error("Unknown Upload Error:", err);
+        return res.status(500).send({ message: 'Internal server error during upload.' });
+      }
+
+      // Check if a file was actually uploaded
+      if (!req.file) {
+        return res.status(400).send({ message: 'No file uploaded. Expected field name: diagnostics.' });
+      }
+
+      console.log(`[SUCCESS] File uploaded: ${req.file.originalname}`);
+      console.log(`[PATH] Saved to: ${req.file.path}`);
+
+      // Send a successful response back to the CP simulator (HTTP client)
+      // The CP will interpret a 200/201 status as a successful transfer.
+      res.status(200).json({
+        message: 'Diagnostics file received successfully.',
+        filename: req.file.originalname
+      });
+    });
   });
 
 } catch (err) {
