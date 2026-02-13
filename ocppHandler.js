@@ -15,6 +15,7 @@ import StopTransactionSchema from "./jsonSchemas/StopTransaction.json" with { ty
 import MeterValuesSchema from "./jsonSchemas/MeterValuesSchema.json" with { type: "json" };
 import { logError } from "./Utilitiy/LoggerHelper.js";
 import IdTag from "./models/IdTag.js";
+import Reservation from "./models/reservation.js";
 const ajv = new Ajv();
 addFormats(ajv);
 
@@ -846,6 +847,89 @@ export class OcppHandler {
       return { success: false, error: error.message };
     }
   }
+
+  async reserveNow({ connectorId, idTag, parentIdTag = null, expiryDate }) {
+    return new Promise(async (resolve, reject) => {
+      try {
+        const action = "ReserveNow";
+        const messageId = `${action}-${Date.now()}`;
+        const reservationId = Math.floor(Math.random() * 100000);
+
+        // 1. Build payload
+        const payload = {
+          connectorId,
+          expiryDate,
+          idTag,
+          reservationId,
+        };
+
+        if (parentIdTag) payload.parentIdTag = parentIdTag;
+
+        // 2. Create OCPP CALL message
+        const ocppMessage = [
+          2, // CALL
+          messageId, // message ID
+          action, // Action: ReserveNow
+          payload, // Payload
+        ];
+
+        // 3. Setup timeout promise
+        const timeout = setTimeout(() => {
+          if (this.callPromises) this.callPromises.delete(messageId);
+          reject(
+            new Error(
+              `Timeout: CP did not respond to ${action} within 10 seconds.`
+            )
+          );
+        }, 10000);
+
+        // 4. Validate callPromises map exists
+        if (!this.callPromises) {
+          clearTimeout(timeout);
+          return reject(
+            new Error("Internal error: 'this.callPromises' is not available.")
+          );
+        }
+
+        // 5. Register resolver so CP response can resolve it
+        this.callPromises.set(messageId, {
+          resolve,
+          reject,
+          action,
+          timeout,
+          reservationData: {
+            connectorId,
+            idTag,
+            parentIdTag,
+            expiryDate,
+            reservationId,
+          },
+        });
+
+        // 6. Validate WebSocket
+        if (!this.ws || this.ws.readyState !== 1) {
+          clearTimeout(timeout);
+          this.callPromises.delete(messageId);
+
+          return reject(
+            new Error(
+              "WebSocket connection is not open. Could not send ReserveNow message."
+            )
+          );
+        }
+
+        // 7. Log and send message to CP
+        logger.info(`CSMS -> CP : ${JSON.stringify(ocppMessage)}`);
+        this.ws.send(JSON.stringify(ocppMessage));
+
+        console.log(`📤 ReserveNow.req sent to CP (${this.cpId})`);
+      } catch (error) {
+        console.error("❌ Error sending ReserveNow:", error);
+        reject(error);
+      }
+    });
+  }
+
   // Handle a "CallResult" message (Response from a Central System initiated call)
   async handleCallResult(message) {
     const [type, messageId, payload] = message;
@@ -887,6 +971,9 @@ export class OcppHandler {
         isValid = this.validateSendLocalListConf(message, action);
         break;
 
+      case "ReserveNow":
+        isValid = this.validateReserveNowConf(message, action);
+        break;
       default:
         console.warn(`No schema found for action: ${action}`);
     }
@@ -1243,6 +1330,58 @@ export class OcppHandler {
         reason: "FormatViolation",
       });
     }
+    return valid;
+  }
+
+  async validateReserveNowConf(message, action) {
+    const [messageType, messageId, payload] = message;
+    const entry = this.callPromises.get(messageId);
+    if (!entry) {
+      console.error("❌ No pending reservation found for", messageId);
+      return false;
+    }
+    const { resolve, reject, timeout, reservationData } = entry;
+    const { connectorId, idTag, parentIdTag, expiryDate, reservationId } =
+      reservationData;
+
+    clearTimeout(timeout);
+    this.callPromises.delete(messageId);
+
+    // console.log("message=======>>>>>>>>>", message[2].status);
+    const schema = {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: ["Accepted", "Rejected"],
+        },
+      },
+      required: ["status"],
+      additionalProperties: false,
+    };
+
+    const valid = await this.validatePayload(schema, payload);
+    if (!valid) {
+      console.error(`Validation failed for ${action} :`, valid);
+      logError({
+        action,
+        messageId,
+        payload,
+        reason: "FormatViolation",
+      });
+    }
+    // console.log("payload status", payload.status);
+    if (payload.status === "Accepted") {
+      await Reservation.create({
+        connectorId,
+        idTag,
+        parentIdTag: parentIdTag || null,
+        expiryDate,
+        reservationId,
+        status: "Active",
+      });
+    }
+
     return valid;
   }
 }
