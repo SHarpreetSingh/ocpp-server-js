@@ -3,6 +3,7 @@ import chargePoint from "../models/chargePoint.js";
 // import transaction from "../models/transaction.js";
 import { logError } from "../Utilitiy/LoggerHelper.js";
 import Configuration from "../models/configuration.js";
+
 export async function createAndUpdateBootnotification(
   payload,
   ocppHandler,

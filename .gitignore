@@ -4,3 +4,5 @@ node_modules/
 bulkWs.js
 logs
 .env
+uploaded_diagnostics/*.log
+uploaded_diagnostics/*.zip

@@ -12,6 +12,14 @@ import transaction from "./models/transaction.js";
 import cors from "cors";
 import chargePoint from "./models/chargePoint.js";
 app.use(bodyParser.json());
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const uploadDir = path.join(__dirname, 'uploaded_diagnostics');
 
 const connectedChargePoints = new Map();
 
@@ -23,6 +31,29 @@ app.use(
     credentials: true,
   })
 );
+
+// Ensure the upload directory exists
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir);
+  console.log(`Created upload directory: ${uploadDir}`);
+}
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+      // Use the dedicated directory for storing diagnostics files
+      cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+      // Use the original filename provided by the CP (e.g., CP-MANUAL-003-logs.zip)
+      // Sanitizing the filename might be needed in a production environment
+      cb(null, file.originalname);
+    }
+  });
+
+  const upload = multer({
+    storage: storage,
+    limits: { fileSize: 1 * 1024 * 1024 } // 10MB file size limit for example
+  }).single('diagnostics');
 
 // const apiLoggerMiddleware = (req, res, next) => {
 //   // Determine the client IP address, accounting for proxies
@@ -463,6 +494,149 @@ try {
       });
     }
   });
+
+  // 
+  app.post("/adminApi/chargers/:cpId/getDiagnostics", async (req, res) => {
+    const serialNumber = req.params.cpId;
+    if (!serialNumber)
+      return res
+        .status(400)
+        .json({ error: "serialNumber is required for remote stop." });
+
+    const { location, startTime, stopTime } = req.body;
+
+    // 1. Basic Input Validation
+    if (!location || typeof location !== 'string' || !location.startsWith('ftp') && !location.startsWith('http')) {
+      return res
+        .status(400)
+        .json({
+          message: "❌ Invalid request. 'location' (a valid FTP/HTTP URL) is required."
+        });
+    }
+
+    // 2. Locate the Handler Instance
+    const handlerInstance = connectedChargePoints.get(serialNumber);
+    if (!handlerInstance) {
+      return res
+        .status(404)
+        .json({
+          message: `❌ Charge point ${serialNumber} is not connected.`
+        });
+    }
+
+    const ocppPayload = {
+      location, startTime, stopTime
+    };
+
+    try {
+      // 3. Send the GetDiagnostics.req command via the OcppHandler instance.
+      const result = await handlerInstance.getDiagnostics(
+        serialNumber,
+        ocppPayload
+      );
+
+      res.status(200).json({
+        message: `Diagnostics request accepted. CP will upload logs as: ${result}`,
+        result,
+        // cpResponse: result,
+      });
+
+    } catch (error) {
+      console.error(`Error initiating GetDiagnostics for ${serialNumber}:`, error.message);
+      let statusCode = 500;
+      if (error.message.includes("Validation failed")) {
+        statusCode = 400;
+      }
+      res.status(statusCode).json({
+        message: `❌ Failed to send GetDiagnostics command.`,
+        error: error.message,
+      });
+    }
+  });
+
+  // 
+  app.post("/adminApi/chargers/:cpId/update-firmware", async (req, res) => {
+    const serialNumber = req.params.cpId;
+    if (!serialNumber)
+      return res
+        .status(400)
+        .json({ error: "serialNumber is required for remote stop." });
+
+    const { location, retrieveDate } = req.body;
+
+    // 1. Basic Input Validation (Location and ISO 8601 Timestamp)
+    if (!location || !retrieveDate || typeof location !== 'string' || typeof retrieveDate !== 'string') {
+      return res
+        .status(400)
+        .json({
+          message: "❌ Invalid request. 'location' (firmware URL) and 'retrieveDate' (ISO 8601 time) are required."
+        });
+    }
+
+    // 2. Locate the Handler Instance
+    const handlerInstance = connectedChargePoints.get(serialNumber);
+    if (!handlerInstance) {
+      return res
+        .status(404)
+        .json({
+          message: `❌ Charge point ${serialNumber} is not connected.`
+        });
+    }
+
+    try {
+      // 3. (waits for immediate acknowledgement)
+      const result = await handlerInstance.updateFirmware(
+        serialNumber,
+        req.body
+      );
+
+      console.debug("updateFirmwareCommand", result)
+      // Check if the result is an object and if it is empty
+
+
+      // 4. Confirmation Payload is empty {}, so success means acceptance.
+      res.status(200).json({
+        message: `Firmware update scheduled for ${retrieveDate}. CP acknowledged the command.`,
+        cpResponsed: result, // Will be {} if successful
+      });
+    } catch (error) {
+      console.error(`Error initiating UpdateFirmware for ${serialNumber}:`, error);
+      res.status(500).json({
+        message: `Failed to send UpdateFirmware command or command timed out.`,
+        error: error.message,
+      });
+    }
+  });
+
+
+  app.post('/adminApi/upload/logs', (req, res) => {
+    upload(req, res, (err) => {
+      if (err instanceof multer.MulterError) {
+        console.error("Multer Error:", err.message);
+        // Example: Handle file size limit error
+        return res.status(400).send({ message: `Upload failed: ${err.message}` });
+      } else if (err) {
+        console.error("Unknown Upload Error:", err);
+        return res.status(500).send({ message: 'Internal server error during upload.' });
+      }
+
+      // Check if a file was actually uploaded
+      if (!req.file) {
+        return res.status(400).send({ message: 'No file uploaded. Expected field name: diagnostics.' });
+      }
+
+      console.log(`[SUCCESS] File uploaded: ${req.file.originalname}`);
+      console.log(`[PATH] Saved to: ${req.file.path}`);
+
+      // Send a successful response back to the CP simulator (HTTP client)
+      // The CP will interpret a 200/201 status as a successful transfer.
+      res.status(200).json({
+        message: 'Diagnostics file received successfully.',
+        filename: req.file.originalname
+      });
+    });
+  });
+
 } catch (err) {
   console.log("err", err);
 }
